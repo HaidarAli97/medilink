@@ -1,0 +1,124 @@
+rules_version = '2';
+
+// MediLink Firestore Security Rules
+// ----------------------------------
+// Identity is the authenticated Firebase UID (request.auth.uid). This phase
+// stores ONLY user profiles, at users/{uid}. Roles are: "patient" | "doctor"
+// | "admin", read from the requester's own profile document — never trusted
+// from client input.
+//
+// Clinic data (patients, doctors, appointments, medicalRecords, prescriptions)
+// is NOT in Firestore yet — it still lives in the in-memory demo layer — so
+// every non-users path is denied by default (final catch-all). When those
+// collections are migrated later, add one role-aware match block per collection
+// (design sketch at the bottom of this file); do not relax the catch-all.
+//
+// Access model:
+//   - READ    a profile: the owner, or any admin. (Non-admins cannot list or
+//             read other users, so no patient can see another patient's data.)
+//   - CREATE  a profile: only your OWN doc, only as "patient", never pre-linked
+//             to a clinical record. Covers self-registration and self-heal.
+//   - UPDATE  a profile: admins may change anything (this is how doctor/admin
+//             roles are provisioned). A non-admin owner may edit only display
+//             fields — never role, uid, email, or linkedId (the authorization
+//             link that decides which records they can see).
+//   - DELETE  a profile: admins only.
+//
+// Bootstrapping the first admin: no admin exists initially, so create the first
+// admin's users/{uid} document directly in the Firebase console (console writes
+// bypass these rules). NOTE: if that admin signed in BEFORE its doc existed,
+// self-heal created a "patient" doc for it — fix it in the console by setting
+// role to "admin". After that, admins can provision other doctors/admins.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- helpers -------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Does the signed-in user have a profile document at all?
+    function hasProfile() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    // The role stored on the requester's OWN profile (server-side source of truth).
+    function myRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isAdmin() {
+      return hasProfile() && myRole() == 'admin';
+    }
+
+    // ---- user profiles: users/{uid} ------------------------------------
+    match /users/{uid} {
+
+      // Read: owner reads own profile; admins read any. Non-admins can neither
+      // read another user's doc nor list the collection.
+      allow read: if isOwner(uid) || isAdmin();
+
+      // Create: only your own doc, only as a patient, never pre-linked, and only
+      // the known profile fields (no field injection). Self-signup and self-heal
+      // both satisfy this; doctor/admin can never be self-assigned.
+      allow create: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(
+             ['uid', 'fullName', 'email', 'role', 'phone', 'profileImage', 'createdAt', 'linkedId'])
+        && request.resource.data.uid == uid
+        && request.resource.data.role == 'patient'
+        && request.resource.data.linkedId == null;
+
+      // Update: admins may change anything (incl. role/linkedId — this is how
+      // roles are provisioned). A non-admin owner may edit only display fields;
+      // role, uid, email and linkedId must be unchanged, so a client can never
+      // escalate its role or re-point itself at another user's records.
+      allow update: if isAdmin()
+        || (isOwner(uid)
+            && request.resource.data.role == resource.data.role
+            && request.resource.data.uid == resource.data.uid
+            && request.resource.data.email == resource.data.email
+            && request.resource.data.linkedId == resource.data.linkedId);
+
+      // Delete: admins only.
+      allow delete: if isAdmin();
+    }
+
+    // ---- default deny --------------------------------------------------
+    // Clinic collections are not in Firestore in this phase. Everything that is
+    // not explicitly matched above is denied.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FUTURE (do NOT enable until clinical data is actually migrated to Firestore):
+// when patients/doctors/appointments/records/prescriptions move server-side,
+// replace the catch-all with role-aware blocks, e.g. — enforcing requirements
+// 8-10 (doctors see only their own patients; patients see only their own data):
+//
+//   function myLinkedId() {
+//     return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.linkedId;
+//   }
+//   function isDoctor() { return hasProfile() && myRole() == 'doctor'; }
+//
+//   match /appointments/{id} {
+//     allow read: if isAdmin()
+//       || (isDoctor()  && resource.data.doctorId  == myLinkedId())
+//       || (isSignedIn() && resource.data.patientId == myLinkedId());
+//     allow write: if isAdmin() || (isDoctor() && resource.data.doctorId == myLinkedId());
+//   }
+//   match /medicalRecords/{id} {
+//     allow read: if isAdmin()
+//       || (isDoctor()  && resource.data.doctorId  == myLinkedId())
+//       || (isSignedIn() && resource.data.patientId == myLinkedId());
+//     allow write: if isAdmin() || (isDoctor() && resource.data.doctorId == myLinkedId());
+//   }
+// ---------------------------------------------------------------------------

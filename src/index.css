@@ -1,0 +1,464 @@
+@import "tailwindcss";
+
+/* Enable class-based dark mode: `dark:` utilities respond to a `.dark` class
+   on the document root (toggled by ThemeContext + the pre-paint script in
+   index.html), not the OS preference. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* Brand — a calm, clinical teal. Kept as the single source of accent truth
+     so the same tokens read correctly in both themes. */
+  --color-primary-50: #f0fdfa;
+  --color-primary-100: #ccfbf1;
+  --color-primary-200: #99f6e4;
+  --color-primary-300: #5eead4;
+  --color-primary-400: #2dd4bf;
+  --color-primary-500: #14b8a6;
+  --color-primary-600: #0d9488;
+  --color-primary-700: #0f766e;
+  --color-primary-800: #115e59;
+  --color-primary-900: #134e4a;
+}
+
+/* ============================================================================
+   Design tokens — shadows, gradients and glass surfaces resolve per theme via
+   CSS variables so hand-authored utilities stay DRY (one glass system, not one
+   per component).
+   ========================================================================== */
+:root {
+  --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04),
+    0 6px 20px -6px rgba(15, 23, 42, 0.1);
+  --shadow-lift: 0 10px 34px -8px rgba(15, 23, 42, 0.18);
+  --shadow-glass: 0 8px 30px rgba(2, 6, 23, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55);
+
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-bg-strong: rgba(255, 255, 255, 0.9);
+  --glass-border: rgba(255, 255, 255, 0.55);
+
+  /* Signature brand gradient: teal → cyan → blue. Used for hero accents,
+     gradient text and the primary action highlight. */
+  --gradient-brand: linear-gradient(135deg, #0d9488 0%, #0891b2 52%, #2563eb 100%);
+  --gradient-brand-soft: linear-gradient(
+    135deg,
+    rgba(13, 148, 136, 0.14),
+    rgba(37, 99, 235, 0.12)
+  );
+
+  --aurora-1: rgba(13, 148, 136, 0.16);
+  --aurora-2: rgba(37, 99, 235, 0.13);
+  --aurora-3: rgba(14, 165, 233, 0.1);
+  --app-bg: var(--color-slate-50);
+}
+
+.dark {
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.3),
+    0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  --shadow-lift: 0 14px 44px -10px rgba(0, 0, 0, 0.62);
+  --shadow-glass: 0 8px 30px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+
+  --glass-bg: rgba(15, 23, 42, 0.62);
+  --glass-bg-strong: rgba(15, 23, 42, 0.85);
+  --glass-border: rgba(148, 163, 184, 0.16);
+
+  --aurora-1: rgba(13, 148, 136, 0.22);
+  --aurora-2: rgba(37, 99, 235, 0.18);
+  --aurora-3: rgba(14, 165, 233, 0.14);
+  --app-bg: var(--color-slate-950);
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--app-bg);
+  color: var(--color-slate-800);
+}
+
+.dark body {
+  color: var(--color-slate-200);
+}
+
+/* ============================================================================
+   Glass system — ONE reusable set of frosted surfaces. `.glass` for floating
+   accents/heroes, `.glass-strong` for content-dense surfaces (tables, forms)
+   where legibility matters more than translucency.
+   ========================================================================== */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-glass);
+}
+.glass-strong {
+  background: var(--glass-bg-strong);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-glass);
+}
+
+/* A hairline gradient highlight along the top edge — the subtle "lit from
+   above" cue that sells the depth. Opt in with `.glass-highlight`. */
+.glass-highlight {
+  position: relative;
+}
+.glass-highlight::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.7),
+    transparent
+  );
+  pointer-events: none;
+}
+.dark .glass-highlight::before {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(148, 163, 184, 0.35),
+    transparent
+  );
+}
+
+/* ============================================================================
+   Layered backgrounds — soft aurora fields behind the app shell and auth
+   screens. Static gradients (cheap); the drifting motion lives on the blobs.
+   ========================================================================== */
+.app-shell-bg {
+  background-color: var(--app-bg);
+  background-image: radial-gradient(
+      1100px 560px at 100% -8%,
+      var(--aurora-1),
+      transparent 60%
+    ),
+    radial-gradient(900px 520px at -8% 12%, var(--aurora-2), transparent 55%);
+  background-attachment: fixed;
+}
+
+.aurora-field {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.aurora-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(64px);
+  opacity: 0.9;
+  will-change: transform;
+}
+
+/* ============================================================================
+   Surface interactions — the shared hover/press micro-interactions.
+   ========================================================================== */
+.card-interactive {
+  transition: transform 0.22s ease, box-shadow 0.22s ease,
+    border-color 0.22s ease;
+  will-change: transform;
+}
+.card-interactive:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lift);
+}
+
+/* Gentle CSS-only 3D tilt for hero/feature visuals — no JS, no libraries. */
+.tilt-3d {
+  perspective: 1200px;
+}
+.tilt-3d > * {
+  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  transform-style: preserve-3d;
+}
+.tilt-3d:hover > * {
+  transform: rotateX(4deg) rotateY(-6deg);
+}
+
+/* Brand gradient helpers. */
+.text-gradient {
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.bg-brand-gradient {
+  background-image: var(--gradient-brand);
+}
+.bg-brand-soft {
+  background-image: var(--gradient-brand-soft);
+}
+
+/* ============================================================================
+   Motion vocabulary — one consistent set of entrances/loops used app-wide.
+   Fast, subtle, professional; nothing bouncy or spinning for decoration.
+   ========================================================================== */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+@keyframes float-slow {
+  0%,
+  100% {
+    transform: translateY(0) translateX(0);
+  }
+  50% {
+    transform: translateY(-16px) translateX(6px);
+  }
+}
+@keyframes drift {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(4%, 5%) scale(1.06);
+  }
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.85);
+    opacity: 0.55;
+  }
+  70% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.24s ease-out both;
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.animate-scale-in {
+  animation: scale-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.animate-slide-in-right {
+  animation: slide-in-right 0.32s ease-out both;
+}
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+.animate-float-slow {
+  animation: float-slow 9s ease-in-out infinite;
+}
+.animate-drift {
+  animation: drift 18s ease-in-out infinite;
+}
+.animate-pop {
+  animation: pop 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Expanding "heartbeat" ring, layered behind the hero visual. */
+.pulse-ring {
+  animation: pulse-ring 2.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* Staggered entrance for lists/grids — children fade up in sequence. */
+.stagger-children > * {
+  opacity: 0;
+  animation: fade-in-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.stagger-children > *:nth-child(1) {
+  animation-delay: 0.04s;
+}
+.stagger-children > *:nth-child(2) {
+  animation-delay: 0.1s;
+}
+.stagger-children > *:nth-child(3) {
+  animation-delay: 0.16s;
+}
+.stagger-children > *:nth-child(4) {
+  animation-delay: 0.22s;
+}
+.stagger-children > *:nth-child(5) {
+  animation-delay: 0.28s;
+}
+.stagger-children > *:nth-child(6) {
+  animation-delay: 0.34s;
+}
+.stagger-children > *:nth-child(7) {
+  animation-delay: 0.4s;
+}
+.stagger-children > *:nth-child(8) {
+  animation-delay: 0.46s;
+}
+
+/* Shimmer skeleton — a moving highlight over a neutral base. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--color-slate-200);
+}
+.dark .skeleton {
+  background: var(--color-slate-800);
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.55),
+    transparent
+  );
+  animation: shimmer 1.6s infinite;
+}
+.dark .skeleton::after {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.07),
+    transparent
+  );
+}
+
+/* ============================================================================
+   Accessibility — honour reduced-motion by neutralising non-essential motion
+   while keeping opacity transitions usable. Decorative loops stop entirely.
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .animate-float,
+  .animate-float-slow,
+  .animate-drift,
+  .pulse-ring,
+  .skeleton::after {
+    animation: none !important;
+  }
+  .card-interactive:hover,
+  .tilt-3d:hover > * {
+    transform: none !important;
+  }
+}
+
+/* Recharts labels are painted with hard-coded fills; map them per theme. */
+.chart-grid {
+  stroke: var(--color-slate-200);
+}
+.dark .chart-grid {
+  stroke: var(--color-slate-800);
+}
+.chart-axis text {
+  fill: var(--color-slate-500) !important;
+}
+.chart-tooltip-cursor {
+  fill: var(--color-slate-100);
+}
+.dark .chart-tooltip-cursor {
+  fill: var(--color-slate-800);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-slate-300);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-slate-400);
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: var(--color-slate-700);
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-slate-600);
+}
