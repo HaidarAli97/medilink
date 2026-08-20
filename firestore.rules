@@ -2,16 +2,16 @@ rules_version = '2';
 
 // MediLink Firestore Security Rules
 // ----------------------------------
-// Identity is the authenticated Firebase UID (request.auth.uid). This phase
-// stores ONLY user profiles, at users/{uid}. Roles are: "patient" | "doctor"
-// | "admin", read from the requester's own profile document — never trusted
-// from client input.
+// Identity is the authenticated Firebase UID (request.auth.uid). Firestore
+// stores user profiles at users/{uid} and appointments at appointments/{id}.
+// Roles are: "patient" | "doctor" | "admin", read from the requester's own
+// profile document — never trusted from client input.
 //
-// Clinic data (patients, doctors, appointments, medicalRecords, prescriptions)
-// is NOT in Firestore yet — it still lives in the in-memory demo layer — so
-// every non-users path is denied by default (final catch-all). When those
-// collections are migrated later, add one role-aware match block per collection
-// (design sketch at the bottom of this file); do not relax the catch-all.
+// The remaining clinic data (patients, doctors, medicalRecords, prescriptions)
+// still lives in the in-memory demo layer, so those paths are denied by default
+// (final catch-all). When a collection is migrated later, add one role-aware
+// match block for it (sketch at the bottom of this file); do not relax the
+// catch-all.
 //
 // Access model:
 //   - READ    a profile: the owner, or any admin. (Non-admins cannot list or
@@ -57,6 +57,16 @@ service cloud.firestore {
       return hasProfile() && myRole() == 'admin';
     }
 
+    function isDoctor() {
+      return hasProfile() && myRole() == 'doctor';
+    }
+
+    // The linkedId on the requester's OWN profile — the id of the clinical
+    // record (patients/{id} or doctors/{id}) they act as. Authorization link.
+    function myLinkedId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.linkedId;
+    }
+
     // ---- user profiles: users/{uid} ------------------------------------
     match /users/{uid} {
 
@@ -89,9 +99,36 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ---- appointments: appointments/{id} -------------------------------
+    // The only clinical collection in Firestore. Each doc stores patientId /
+    // doctorId (the mock ids), matched against the requester's linkedId. Reads
+    // are scoped so a patient sees only their own appointments and a doctor only
+    // theirs — client queries MUST filter to match (rules are not filters).
+    match /appointments/{id} {
+
+      // Read: admins all; a doctor their own; a patient their own.
+      allow read: if isAdmin()
+        || (isDoctor()   && resource.data.doctorId  == myLinkedId())
+        || (isSignedIn() && resource.data.patientId == myLinkedId());
+
+      // Create: a patient books for themselves; an admin books for anyone.
+      allow create: if isAdmin()
+        || (isSignedIn() && request.resource.data.patientId == myLinkedId());
+
+      // Update: admins anything; a doctor manages their own appointments; a
+      // patient may update their own (e.g. cancel).
+      allow update: if isAdmin()
+        || (isDoctor()   && resource.data.doctorId  == myLinkedId())
+        || (isSignedIn() && resource.data.patientId == myLinkedId());
+
+      // Delete: admins only (used by the patient/doctor removal cascade).
+      allow delete: if isAdmin();
+    }
+
     // ---- default deny --------------------------------------------------
-    // Clinic collections are not in Firestore in this phase. Everything that is
-    // not explicitly matched above is denied.
+    // Remaining clinic collections (patients, doctors, medicalRecords,
+    // prescriptions) still live in the in-memory demo layer, not Firestore.
+    // Everything not explicitly matched above is denied.
     match /{document=**} {
       allow read, write: if false;
     }
@@ -99,25 +136,13 @@ service cloud.firestore {
 }
 
 // ---------------------------------------------------------------------------
-// FUTURE (do NOT enable until clinical data is actually migrated to Firestore):
-// when patients/doctors/appointments/records/prescriptions move server-side,
-// replace the catch-all with role-aware blocks, e.g. — enforcing requirements
-// 8-10 (doctors see only their own patients; patients see only their own data):
+// FUTURE (do NOT enable until that collection is actually migrated to Firestore):
+// appointments are live above. If medical records move server-side later, add a
+// role-aware block mirroring the appointments one, e.g.:
 //
-//   function myLinkedId() {
-//     return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.linkedId;
-//   }
-//   function isDoctor() { return hasProfile() && myRole() == 'doctor'; }
-//
-//   match /appointments/{id} {
-//     allow read: if isAdmin()
-//       || (isDoctor()  && resource.data.doctorId  == myLinkedId())
-//       || (isSignedIn() && resource.data.patientId == myLinkedId());
-//     allow write: if isAdmin() || (isDoctor() && resource.data.doctorId == myLinkedId());
-//   }
 //   match /medicalRecords/{id} {
 //     allow read: if isAdmin()
-//       || (isDoctor()  && resource.data.doctorId  == myLinkedId())
+//       || (isDoctor()   && resource.data.doctorId  == myLinkedId())
 //       || (isSignedIn() && resource.data.patientId == myLinkedId());
 //     allow write: if isAdmin() || (isDoctor() && resource.data.doctorId == myLinkedId());
 //   }

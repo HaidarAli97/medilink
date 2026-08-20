@@ -48,6 +48,22 @@ function profile(uid, overrides = {}) {
   };
 }
 
+/** A minimal appointment doc for the appointments-rules tests. */
+function appointment(patientId, doctorId, overrides = {}) {
+  return {
+    patientId,
+    doctorId,
+    date: "2024-03-01",
+    time: "09:00",
+    duration: 30,
+    type: "Consultation",
+    reason: "Test",
+    status: "pending",
+    createdAt: "2024-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 // Seed baseline docs bypassing the rules (as the console / an admin would).
 await testEnv.clearFirestore();
 await testEnv.withSecurityRulesDisabled(async (ctx) => {
@@ -57,12 +73,24 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, "users", "patient-2"), profile("patient-2"));
   await setDoc(doc(db, "users", "prov-target"), profile("prov-target"));
   await setDoc(doc(db, "users", "del-target"), profile("del-target"));
+  // Linked identities + seed appointments for the appointments-rules tests.
+  await setDoc(doc(db, "users", "pat-linked-1"), profile("pat-linked-1", { linkedId: "pat-001" }));
+  await setDoc(
+    doc(db, "users", "doc-linked-1"),
+    profile("doc-linked-1", { role: "doctor", linkedId: "doc-001" }),
+  );
+  await setDoc(doc(db, "appointments", "appt-1"), appointment("pat-001", "doc-001"));
+  await setDoc(doc(db, "appointments", "appt-2"), appointment("pat-002", "doc-002"));
 });
 
 const patient = testEnv.authenticatedContext("patient-1", { email: "patient-1@example.com" }).firestore();
 const attacker = testEnv.authenticatedContext("attacker", { email: "attacker@example.com" }).firestore();
 const admin = testEnv.authenticatedContext("admin-1", { email: "admin-1@example.com" }).firestore();
 const anon = testEnv.unauthenticatedContext().firestore();
+// Role-scoped identities for the appointments tests: p1 is linked to pat-001,
+// d1 is a doctor linked to doc-001.
+const p1 = testEnv.authenticatedContext("pat-linked-1", { email: "pat-linked-1@example.com" }).firestore();
+const d1 = testEnv.authenticatedContext("doc-linked-1", { email: "doc-linked-1@example.com" }).firestore();
 
 let passed = 0;
 let failed = 0;
@@ -184,10 +212,76 @@ await expect(
   assertSucceeds(deleteDoc(doc(admin, "users", "del-target"))),
 );
 
-// --- Clinical collections are not in Firestore yet: default-deny ---------
+// --- Appointments: role-scoped access -----------------------------------
+await expect(
+  "patient CAN read own appointment",
+  assertSucceeds(getDoc(doc(p1, "appointments", "appt-1"))),
+);
+await expect(
+  "patient CANNOT read another patient's appointment",
+  assertFails(getDoc(doc(p1, "appointments", "appt-2"))),
+);
+await expect(
+  "patient CAN book (create) an appointment for themselves",
+  assertSucceeds(setDoc(doc(p1, "appointments", "appt-new-1"), appointment("pat-001", "doc-001"))),
+);
+await expect(
+  "patient CANNOT create an appointment for another patient",
+  assertFails(setDoc(doc(p1, "appointments", "appt-new-2"), appointment("pat-002", "doc-001"))),
+);
+await expect(
+  "patient CAN cancel (update) own appointment",
+  assertSucceeds(updateDoc(doc(p1, "appointments", "appt-1"), { status: "cancelled" })),
+);
+await expect(
+  "patient CANNOT update another patient's appointment",
+  assertFails(updateDoc(doc(p1, "appointments", "appt-2"), { status: "cancelled" })),
+);
+await expect(
+  "doctor CAN read their own appointment",
+  assertSucceeds(getDoc(doc(d1, "appointments", "appt-1"))),
+);
+await expect(
+  "doctor CANNOT read another doctor's appointment",
+  assertFails(getDoc(doc(d1, "appointments", "appt-2"))),
+);
+await expect(
+  "doctor CAN confirm (update) their own appointment",
+  assertSucceeds(updateDoc(doc(d1, "appointments", "appt-1"), { status: "confirmed" })),
+);
+await expect(
+  "doctor CANNOT update another doctor's appointment",
+  assertFails(updateDoc(doc(d1, "appointments", "appt-2"), { status: "confirmed" })),
+);
+await expect(
+  "admin CAN read any appointment",
+  assertSucceeds(getDoc(doc(admin, "appointments", "appt-2"))),
+);
+await expect(
+  "admin CAN create an appointment for anyone",
+  assertSucceeds(setDoc(doc(admin, "appointments", "appt-admin-1"), appointment("pat-002", "doc-002"))),
+);
+await expect(
+  "patient CANNOT delete an appointment",
+  assertFails(deleteDoc(doc(p1, "appointments", "appt-1"))),
+);
+await expect(
+  "admin CAN delete an appointment",
+  assertSucceeds(deleteDoc(doc(admin, "appointments", "appt-2"))),
+);
+await expect(
+  "anonymous CANNOT read an appointment",
+  assertFails(getDoc(doc(anon, "appointments", "appt-1"))),
+);
+await expect(
+  "anonymous CANNOT create an appointment",
+  assertFails(setDoc(doc(anon, "appointments", "appt-anon"), appointment("pat-001", "doc-001"))),
+);
+
+// --- Un-migrated clinical collections: still default-deny ----------------
 await expect(
   "admin CANNOT touch un-migrated clinical paths (default deny)",
-  assertFails(setDoc(doc(admin, "appointments", "appt-1"), { patientId: "pat-001" })),
+  assertFails(setDoc(doc(admin, "medicalRecords", "rec-1"), { patientId: "pat-001" })),
 );
 
 await testEnv.cleanup();

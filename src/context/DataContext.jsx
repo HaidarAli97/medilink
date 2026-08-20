@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
 } from "react";
@@ -15,20 +16,64 @@ import {
   prescriptions as seedPrescriptions,
 } from "../data/mockData";
 import { uid } from "../lib/utils";
+import { isFirebaseConfigured } from "../services/firebase";
+import {
+  createAppointmentDoc,
+  deleteAppointmentsByField,
+  subscribeAppointments,
+  updateAppointmentDoc,
+} from "../services/appointmentsService";
+import { useAuth } from "./AuthContext";
 
 const DataContext = createContext(null);
 
+/** Fire-and-forget a Firestore write; surface failures in dev (e.g. rules not yet deployed). */
+function warnWrite(promise) {
+  promise?.catch?.((err) => {
+    if (import.meta.env?.DEV) {
+      console.error("[MediLink] appointment write failed:", err);
+    }
+  });
+}
+
 export function DataProvider({ children }) {
+  const { user, loading } = useAuth();
   const [patients, setPatients] = useState(seedPatients);
   const [doctors, setDoctors] = useState(seedDoctors);
-  const [appointments, setAppointments] =
-    useState(seedAppointments);
+  // Appointments are the one collection persisted in Firestore. When Firebase is
+  // configured we start empty and let the subscription below fill state; in mock
+  // mode (and during SSR, where effects don't run) we use the seed as before.
+  const [appointments, setAppointments] = useState(
+    isFirebaseConfigured ? [] : seedAppointments,
+  );
   const [records, setRecords] = useState(seedRecords);
   const [prescriptions, setPrescriptions] =
     useState(seedPrescriptions);
   const [notifications, setNotifications] =
     useState(seedNotifications);
   const [activities, setActivities] = useState(seedActivities);
+
+  // Live Firestore feed of the appointments the signed-in user may see, scoped
+  // to match firestore.rules (patient → own, doctor → theirs, admin → all). It
+  // mirrors remote docs into `appointments` so every selector/page that reads
+  // the array is unchanged. No-ops in mock mode / SSR.
+  useEffect(() => {
+    if (!isFirebaseConfigured || loading) return;
+    if (!user || (user.role !== "admin" && !user.linkedId)) {
+      setAppointments([]);
+      return;
+    }
+    const unsubscribe = subscribeAppointments(
+      { role: user.role, linkedId: user.linkedId },
+      setAppointments,
+      (err) => {
+        if (import.meta.env?.DEV) {
+          console.error("[MediLink] appointments subscription error:", err);
+        }
+      },
+    );
+    return unsubscribe;
+  }, [user, loading]);
 
   const logActivity = useCallback(
     (action, detail, type) => {
@@ -70,9 +115,13 @@ export function DataProvider({ children }) {
   const deletePatient = useCallback(
     (id) => {
       setPatients((prev) => prev.filter((p) => p.id !== id));
-      setAppointments((prev) =>
-        prev.filter((a) => a.patientId !== id),
-      );
+      if (isFirebaseConfigured) {
+        warnWrite(deleteAppointmentsByField("patientId", id));
+      } else {
+        setAppointments((prev) =>
+          prev.filter((a) => a.patientId !== id),
+        );
+      }
       setRecords((prev) => prev.filter((r) => r.patientId !== id));
       setPrescriptions((prev) =>
         prev.filter((r) => r.patientId !== id),
@@ -108,9 +157,13 @@ export function DataProvider({ children }) {
   const deleteDoctor = useCallback(
     (id) => {
       setDoctors((prev) => prev.filter((d) => d.id !== id));
-      setAppointments((prev) =>
-        prev.filter((a) => a.doctorId !== id),
-      );
+      if (isFirebaseConfigured) {
+        warnWrite(deleteAppointmentsByField("doctorId", id));
+      } else {
+        setAppointments((prev) =>
+          prev.filter((a) => a.doctorId !== id),
+        );
+      }
     },
     [],
   );
@@ -122,7 +175,11 @@ export function DataProvider({ children }) {
         id: uid("appt"),
         createdAt: new Date().toISOString(),
       };
-      setAppointments((prev) => [...prev, newAppointment]);
+      if (isFirebaseConfigured) {
+        warnWrite(createAppointmentDoc(newAppointment));
+      } else {
+        setAppointments((prev) => [...prev, newAppointment]);
+      }
       const patient = patients.find((p) => p.id === appointment.patientId);
       const doctor = doctors.find((d) => d.id === appointment.doctorId);
       logActivity(
@@ -139,20 +196,28 @@ export function DataProvider({ children }) {
 
   const updateAppointment = useCallback(
     (id, appointment) => {
-      setAppointments((prev) =>
-        prev.map((a) => (a.id === id ? { ...a, ...appointment } : a)),
-      );
+      if (isFirebaseConfigured) {
+        warnWrite(updateAppointmentDoc(id, appointment));
+      } else {
+        setAppointments((prev) =>
+          prev.map((a) => (a.id === id ? { ...a, ...appointment } : a)),
+        );
+      }
     },
     [],
   );
 
   const cancelAppointment = useCallback(
     (id) => {
-      setAppointments((prev) =>
-        prev.map((a) =>
-          a.id === id ? { ...a, status: "cancelled" } : a,
-        ),
-      );
+      if (isFirebaseConfigured) {
+        warnWrite(updateAppointmentDoc(id, { status: "cancelled" }));
+      } else {
+        setAppointments((prev) =>
+          prev.map((a) =>
+            a.id === id ? { ...a, status: "cancelled" } : a,
+          ),
+        );
+      }
       logActivity("Appointment cancelled", `Appointment ${id} was cancelled`, "appointment");
     },
     [logActivity],
@@ -164,9 +229,13 @@ export function DataProvider({ children }) {
    * cancel; the doctor marks completed after the visit.
    */
   const setAppointmentStatus = useCallback((id, status) => {
-    setAppointments((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, status } : a)),
-    );
+    if (isFirebaseConfigured) {
+      warnWrite(updateAppointmentDoc(id, { status }));
+    } else {
+      setAppointments((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, status } : a)),
+      );
+    }
   }, []);
 
   const requestAppointment = useCallback(
@@ -177,7 +246,11 @@ export function DataProvider({ children }) {
         status: "pending",
         createdAt: new Date().toISOString(),
       };
-      setAppointments((prev) => [...prev, newAppointment]);
+      if (isFirebaseConfigured) {
+        warnWrite(createAppointmentDoc(newAppointment));
+      } else {
+        setAppointments((prev) => [...prev, newAppointment]);
+      }
       const doctor = doctors.find((d) => d.id === appointment.doctorId);
       logActivity(
         "Appointment requested",
@@ -270,7 +343,12 @@ export function DataProvider({ children }) {
   const resetData = useCallback(() => {
     setPatients(seedPatients);
     setDoctors(seedDoctors);
-    setAppointments(seedAppointments);
+    // In mock mode, reset appointments to the seed. When Firebase is configured
+    // they live in Firestore and are driven by the subscription, so a local reset
+    // would just be overwritten by the next snapshot — leave the collection as-is.
+    if (!isFirebaseConfigured) {
+      setAppointments(seedAppointments);
+    }
     setRecords(seedRecords);
     setPrescriptions(seedPrescriptions);
     setNotifications(seedNotifications);
