@@ -58,11 +58,74 @@ function friendlyAuthError(err) {
  * its own profile as a patient and may never change its own role, so a signed-in
  * user cannot escalate privileges. See firestore.rules and the README.
  */
+/** Build the patients/{uid} record for self-registered / self-healed accounts. */
+function patientRecordFromProfile(fbUser, profile) {
+  const fullName = profile.fullName ?? fbUser.displayName ?? fbUser.email ?? "";
+  const [firstName = "", ...rest] = fullName.trim().split(/\s+/);
+  return {
+    id: fbUser.uid,
+    firstName,
+    lastName: rest.join(" ").trim(),
+    phone: profile.phone ?? "",
+    email: profile.email ?? fbUser.email ?? "",
+    dob: "",
+    gender: "Other",
+    bloodGroup: "O+",
+    address: "",
+    allergies: [],
+    conditions: [],
+    insurance: "",
+    emergencyContact: "",
+    status: "active",
+    registeredAt: new Date().toISOString().slice(0, 10),
+  };
+}
+
+/**
+ * Best-effort repair for a patient whose profile predates the linkedId feature
+ * (or whose patients/{uid} record was lost): binds linkedId to the user's own
+ * uid and recreates the patients record if missing. Never touches admins or
+ * admin-managed doctor links (a linkedId that points elsewhere is honored), and
+ * never throws — a healthy session keeps working even when the Firestore rules
+ * aren't deployed yet.
+ */
+async function selfHealPatientRecord(fbUser, profile) {
+  if (profile.role !== ROLES.PATIENT) return;
+  const linkedId = profile.linkedId ?? null;
+  if (linkedId !== null && linkedId !== fbUser.uid) return;
+  try {
+    const patientRef = doc(getFirebaseDb(), "patients", fbUser.uid);
+    const patientSnap = await getDoc(patientRef);
+    const batch = writeBatch(getFirebaseDb());
+    let changed = false;
+    if (!patientSnap.exists()) {
+      batch.set(patientRef, patientRecordFromProfile(fbUser, profile));
+      changed = true;
+    }
+    if (linkedId === null) {
+      batch.set(
+        doc(getFirebaseDb(), "users", fbUser.uid),
+        { linkedId: fbUser.uid },
+        { merge: true },
+      );
+      changed = true;
+    }
+    if (changed) await batch.commit();
+  } catch (err) {
+    console.error("[MediLink] Could not self-heal patient profile:", err);
+  }
+}
+
 async function loadOrCreateProfile(fbUser) {
   const ref = doc(getFirebaseDb(), "users", fbUser.uid);
   const snap = await getDoc(ref);
   if (snap.exists()) {
-    return { uid: fbUser.uid, ...snap.data() };
+    const profile = { uid: fbUser.uid, ...snap.data() };
+    await selfHealPatientRecord(fbUser, profile);
+    if (profile.linkedId == null && profile.role === ROLES.PATIENT) {
+      profile.linkedId = fbUser.uid;
+    }
+    return profile;
   }
 
   const profile = {
@@ -79,23 +142,7 @@ async function loadOrCreateProfile(fbUser) {
   // console-provisioned or orphaned patient account is usable immediately.
   const batch = writeBatch(getFirebaseDb());
   batch.set(ref, profile);
-  batch.set(doc(getFirebaseDb(), "patients", fbUser.uid), {
-    id: fbUser.uid,
-    firstName: fbUser.displayName?.split(" ")[0] ?? "",
-    lastName: fbUser.displayName?.split(" ").slice(1).join(" ") ?? "",
-    phone: "",
-    email: fbUser.email ?? "",
-    dob: "",
-    gender: "Other",
-    bloodGroup: "O+",
-    address: "",
-    allergies: [],
-    conditions: [],
-    insurance: "",
-    emergencyContact: "",
-    status: "active",
-    registeredAt: new Date().toISOString().slice(0, 10),
-  });
+  batch.set(doc(getFirebaseDb(), "patients", fbUser.uid), patientRecordFromProfile(fbUser, profile));
   await batch.commit();
   return profile;
 }

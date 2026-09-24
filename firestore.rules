@@ -67,6 +67,11 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.linkedId;
     }
 
+    // linkedId of a profile doc, or null when the field is absent.
+    function linkedIdOf(profile) {
+      return ('linkedId' in profile) && profile.linkedId != null ? profile.linkedId : null;
+    }
+
     // ---- user profiles: users/{uid} ------------------------------------
     match /users/{uid} {
 
@@ -90,13 +95,24 @@ service cloud.firestore {
       // Update: admins may change anything (incl. role/linkedId — this is how
       // roles are provisioned). A non-admin owner may edit only display fields;
       // role, uid, email and linkedId must be unchanged, so a client can never
-      // escalate its role or re-point itself at another user's records.
+      // escalate its role or re-point itself at another user's records. One
+      // exception: a patient whose profile predates the linkedId feature may
+      // bind once to its OWN patient record (linkedId null -> own uid, role
+      // stays patient, uid/email unchanged). Cannot re-point an already-linked
+      // account elsewhere.
       allow update: if isAdmin()
         || (isOwner(uid)
             && request.resource.data.role == resource.data.role
             && request.resource.data.uid == resource.data.uid
             && request.resource.data.email == resource.data.email
-            && request.resource.data.linkedId == resource.data.linkedId);
+            && request.resource.data.linkedId == resource.data.linkedId)
+        || (isOwner(uid)
+            && resource.data.role == 'patient'
+            && linkedIdOf(resource.data) == null
+            && request.resource.data.role == 'patient'
+            && request.resource.data.uid == uid
+            && request.resource.data.email == resource.data.email
+            && request.resource.data.linkedId == request.auth.uid);
 
       // Delete: admins only.
       allow delete: if isAdmin();
@@ -132,9 +148,12 @@ service cloud.firestore {
     // Self-registered accounts create their own record (id == auth uid) and read
     // only their own. Doctors and admins may read the roster; admins fully manage.
     match /patients/{id} {
+      // Anyone linked to this record, admins and doctors read it; a user may
+      // also read the record named after their own uid (needed before the
+      // profile self-heal establishes the link).
       allow read: if isAdmin()
         || isDoctor()
-        || (isSignedIn() && id == myLinkedId());
+        || (isSignedIn() && (id == myLinkedId() || id == request.auth.uid));
 
       // Self-registration (signUp) creates the linked patient record atomically
       // with the users/{uid} profile; admins create for anyone.

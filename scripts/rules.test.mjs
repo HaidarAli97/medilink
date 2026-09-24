@@ -88,6 +88,11 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, "patients", "pat-002"), {
     id: "pat-002", firstName: "Daniel", lastName: "Carter", status: "active",
   });
+  // A stale account: profile exists with linkedId null AND a self-named
+  // patients/{uid} record (the self-heal target). patient-1 is that account.
+  await setDoc(doc(db, "patients", "patient-1"), {
+    id: "patient-1", firstName: "Test", lastName: "User", status: "active",
+  });
   await setDoc(doc(db, "doctors", "doc-001"), {
     id: "doc-001", firstName: "Sarah", lastName: "Mitchell",
   });
@@ -196,6 +201,33 @@ await expect(
 await expect(
   "patient CANNOT change own linkedId",
   assertFails(updateDoc(doc(patient, "users", "patient-1"), { linkedId: "pat-002" })),
+);
+
+// --- Profile / record self-heal (stale pre-linkedId accounts) -----------
+await expect(
+  "unlinked patient CAN read own self-named record (self-heal read)",
+  assertSucceeds(getDoc(doc(patient, "patients", "patient-1"))),
+);
+await expect(
+  "stale patient CAN bind linkedId to own uid (null -> own uid)",
+  assertSucceeds(updateDoc(doc(patient, "users", "patient-1"), { linkedId: "patient-1" })),
+);
+await expect(
+  "patient CANNOT self-heal linkedId to another user's uid",
+  assertFails(updateDoc(doc(patient, "users", "patient-1"), { linkedId: "someone-else" })),
+);
+await expect(
+  "unlinked patient CAN create own self-named record (self-heal create)",
+  assertSucceeds(
+    setDoc(
+      doc(testEnv.authenticatedContext("self-heal-1").firestore(), "patients", "self-heal-1"),
+      { id: "self-heal-1", firstName: "Healed", lastName: "User", status: "active" },
+    ),
+  ),
+);
+await expect(
+  "doctor CANNOT self-heal their own users linkedId",
+  assertFails(updateDoc(doc(d1, "users", "doc-linked-1"), { linkedId: "doc-linked-1" })),
 );
 
 // --- Legitimate self-service --------------------------------------------
