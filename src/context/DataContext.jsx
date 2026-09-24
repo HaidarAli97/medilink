@@ -29,6 +29,7 @@ import {
   deleteDocsByField,
   patchDoc,
   seedClinicData,
+  subscribeAiConsultations,
   subscribeDoctors,
   subscribePatients,
   subscribeRecords,
@@ -59,6 +60,7 @@ export function DataProvider({ children }) {
   const [records, setRecords] = useState(isFirebaseConfigured ? [] : seedRecords);
   const [prescriptions, setPrescriptions] =
     useState(isFirebaseConfigured ? [] : seedPrescriptions);
+  const [aiConsultations, setAiConsultations] = useState([]);
   const [notifications, setNotifications] =
     useState(seedNotifications);
   const [activities, setActivities] = useState(seedActivities);
@@ -95,6 +97,7 @@ export function DataProvider({ children }) {
       setDoctors([]);
       setRecords([]);
       setPrescriptions([]);
+      setAiConsultations([]);
       return;
     }
     const scope = { role: user.role, linkedId: user.linkedId };
@@ -113,6 +116,7 @@ export function DataProvider({ children }) {
         setPrescriptions,
         onError("prescriptions"),
       ),
+      subscribeAiConsultations(scope, setAiConsultations, onError("ai consultations")),
     ];
     return () => unsubscribers.forEach((u) => u?.());
   }, [user, loading]);
@@ -195,11 +199,13 @@ export function DataProvider({ children }) {
       if (isFirebaseConfigured) {
         warnWrite(deleteDocsByField(CLINIC_COLLECTIONS.records, "patientId", id));
         warnWrite(deleteDocsByField(CLINIC_COLLECTIONS.prescriptions, "patientId", id));
+        warnWrite(deleteDocsByField(CLINIC_COLLECTIONS.aiConsultations, "patientId", id));
       } else {
         setRecords((prev) => prev.filter((r) => r.patientId !== id));
         setPrescriptions((prev) =>
           prev.filter((r) => r.patientId !== id),
         );
+        setAiConsultations((prev) => prev.filter((c) => c.patientId !== id));
       }
       logActivity("Patient removed", "Patient record deleted from the system", "patient");
     },
@@ -449,6 +455,30 @@ export function DataProvider({ children }) {
     [],
   );
 
+  const addAiConsultation = useCallback((consultation) => {
+    const newConsultation = {
+      ...consultation,
+      id: uid("ai"),
+      createdAt: new Date().toISOString(),
+    };
+    let write;
+    if (isFirebaseConfigured) {
+      write = writeDoc(CLINIC_COLLECTIONS.aiConsultations, newConsultation);
+      warnWrite(write);
+    } else {
+      setAiConsultations((prev) => [newConsultation, ...prev]);
+    }
+    return write ?? newConsultation;
+  }, []);
+
+  const deleteAiConsultation = useCallback((id) => {
+    if (isFirebaseConfigured) {
+      warnWrite(deleteDocById(CLINIC_COLLECTIONS.aiConsultations, id));
+    } else {
+      setAiConsultations((prev) => prev.filter((c) => c.id !== id));
+    }
+  }, []);
+
   const markNotificationRead = useCallback((id) => {
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n)),
@@ -469,6 +499,7 @@ export function DataProvider({ children }) {
       setAppointments(seedAppointments);
       setRecords(seedRecords);
       setPrescriptions(seedPrescriptions);
+      setAiConsultations([]);
     }
     setNotifications(seedNotifications);
     setActivities(seedActivities);
@@ -481,6 +512,7 @@ export function DataProvider({ children }) {
       appointments,
       records,
       prescriptions,
+      aiConsultations,
       notifications,
       activities,
       addPatient,
@@ -501,6 +533,8 @@ export function DataProvider({ children }) {
       addPrescription,
       updatePrescription,
       deletePrescription,
+      addAiConsultation,
+      deleteAiConsultation,
       markNotificationRead,
       markAllNotificationsRead,
       logActivity,
@@ -512,6 +546,7 @@ export function DataProvider({ children }) {
       appointments,
       records,
       prescriptions,
+      aiConsultations,
       notifications,
       activities,
       addPatient,
@@ -532,6 +567,8 @@ export function DataProvider({ children }) {
       addPrescription,
       updatePrescription,
       deletePrescription,
+      addAiConsultation,
+      deleteAiConsultation,
       markNotificationRead,
       markAllNotificationsRead,
       logActivity,

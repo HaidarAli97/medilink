@@ -5,6 +5,7 @@ import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Input, Select, Textarea } from "../ui/Field";
 import { fullName } from "../../lib/utils";
+import { AiAssistPanel } from "../ai/AiAssistPanel";
 
 export function PrescriptionForm({
   open,
@@ -12,7 +13,8 @@ export function PrescriptionForm({
   prescription,
   defaultPatientId,
 }) {
-  const { patients, doctors, addPrescription, updatePrescription } = useData();
+  const { patients, doctors, addPrescription, updatePrescription, aiConsultations, addAiConsultation } =
+    useData();
   const { toast } = useToast();
   const [form, setForm] = useState(() =>
     prescription
@@ -39,6 +41,40 @@ export function PrescriptionForm({
   );
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
+  const selectedPatient = patients.find((p) => p.id === form.patientId);
+
+  function applyPrescription(rx) {
+    setForm((f) => ({
+      ...f,
+      medication: rx.name ?? f.medication,
+      dosage: rx.dosage ?? f.dosage,
+      frequency: rx.frequency ?? f.frequency,
+      instructions: rx.instructions ?? f.instructions,
+      refills: String(rx.refills ?? f.refills),
+    }));
+    toast(`Prescription filled: ${rx.name}`);
+  }
+
+  function applyReferral(r) {
+    setForm((f) => ({
+      ...f,
+      instructions: [f.instructions.trim(), `Referred to ${r.specialty} (${r.urgency}) — ${r.reason}`]
+        .filter(Boolean)
+        .join(" "),
+    }));
+    toast(`Referral added: ${r.specialty}`);
+  }
+
+  function saveConsultation(data) {
+    const doctor = doctors.find((d) => d.id === form.doctorId);
+    const saved = addAiConsultation({
+      ...data,
+      doctorId: form.doctorId,
+      doctorName: doctor ? `Dr. ${fullName(doctor.firstName, doctor.lastName)}` : "",
+    });
+    toast("AI consultation saved to patient chart.");
+    return saved;
+  }
 
   function validate() {
     const next = {};
@@ -182,6 +218,14 @@ export function PrescriptionForm({
           <option value="completed">Completed</option>
           <option value="expired">Expired</option>
         </Select>
+
+        <AiAssistPanel
+          patient={selectedPatient}
+          consultations={aiConsultations}
+          onSave={saveConsultation}
+          onApplyPrescription={applyPrescription}
+          onApplyReferral={applyReferral}
+        />
       </form>
     </Modal>
   );

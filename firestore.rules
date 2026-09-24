@@ -222,6 +222,28 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ---- AI consultations: aiConsultations/{id} --------------------------
+    // Saved AI diagnosis sessions, attached to a patient (patientId) and saved
+    // by a doctor (doctorId). A doctor reads/writes only sessions they saved; a
+    // patient reads their own; admins read/delete any (delete used by the
+    // patient-removal cascade). Client queries MUST filter to match.
+    match /aiConsultations/{id} {
+      allow read: if isAdmin()
+        || (isDoctor()   && resource.data.doctorId  == myLinkedId())
+        || (isSignedIn() && resource.data.patientId == myLinkedId());
+
+      allow create: if isAdmin()
+        || (isDoctor()
+            && request.resource.data.doctorId == myLinkedId()
+            && request.resource.data.patientId is string
+            && request.resource.data.patientId.size() > 0);
+
+      allow update: if isAdmin()
+        || (isDoctor() && resource.data.doctorId == myLinkedId());
+
+      allow delete: if isAdmin();
+    }
+
     // ---- default deny --------------------------------------------------
     // Remaining clinic collections (patients, doctors, medicalRecords,
     // prescriptions) still live in the in-memory demo layer, not Firestore.

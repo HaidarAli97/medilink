@@ -105,6 +105,13 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, "prescriptions", "rx-1"), {
     id: "rx-1", patientId: "pat-001", doctorId: "doc-001",
   });
+  // AI consultations for the aiConsultations-rules tests.
+  await setDoc(doc(db, "aiConsultations", "ai-doc-1"), {
+    id: "ai-doc-1", patientId: "pat-001", doctorId: "doc-001", summary: "Possible UTI.",
+  });
+  await setDoc(doc(db, "aiConsultations", "ai-doc-2"), {
+    id: "ai-doc-2", patientId: "pat-002", doctorId: "doc-002", summary: "Migraine workup.",
+  });
 });
 
 const patient = testEnv.authenticatedContext("patient-1", { email: "patient-1@example.com" }).firestore();
@@ -474,6 +481,60 @@ await expect(
   assertSucceeds(setDoc(doc(admin, "prescriptions", "rx-admin"), {
     id: "rx-admin", patientId: "pat-001", doctorId: "doc-001",
   })),
+);
+
+// --- AI consultations -------------------------------------------------------
+await expect(
+  "doctor CAN read their own saved AI consultation",
+  assertSucceeds(getDoc(doc(d1, "aiConsultations", "ai-doc-1"))),
+);
+await expect(
+  "doctor CANNOT read another doctor's AI consultation",
+  assertFails(getDoc(doc(d1, "aiConsultations", "ai-doc-2"))),
+);
+await expect(
+  "doctor CAN save (create) an AI consultation for their patient",
+  assertSucceeds(
+    setDoc(doc(d1, "aiConsultations", "ai-doc-new"), {
+      id: "ai-doc-new", patientId: "pat-001", doctorId: "doc-001", summary: "Cough.",
+    }),
+  ),
+);
+await expect(
+  "doctor CANNOT save an AI consultation under another doctor's id",
+  assertFails(
+    setDoc(doc(d1, "aiConsultations", "ai-doc-forged"), {
+      id: "ai-doc-forged", patientId: "pat-001", doctorId: "doc-002", summary: "X",
+    }),
+  ),
+);
+await expect(
+  "doctor CANNOT save an AI consultation without a patientId",
+  assertFails(
+    setDoc(doc(d1, "aiConsultations", "ai-doc-nopat"), {
+      id: "ai-doc-nopat", doctorId: "doc-001", summary: "X",
+    }),
+  ),
+);
+await expect(
+  "patient CAN read their own AI consultation",
+  assertSucceeds(getDoc(doc(p1, "aiConsultations", "ai-doc-1"))),
+);
+await expect(
+  "patient CANNOT read another patient's AI consultation",
+  assertFails(getDoc(doc(p1, "aiConsultations", "ai-doc-2"))),
+);
+await expect(
+  "patient CANNOT create an AI consultation",
+  assertFails(
+    setDoc(doc(p1, "aiConsultations", "ai-pat-forged"), {
+      id: "ai-pat-forged", patientId: "pat-001", doctorId: "doc-001", summary: "X",
+    }),
+  ),
+);
+await expect(
+  "admin CAN delete an AI consultation",
+  assertSucceeds(deleteDoc(doc(admin, "aiConsultations", "ai-doc-2"))),
 );
 
 await testEnv.cleanup();

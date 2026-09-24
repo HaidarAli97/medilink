@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   CalendarDays,
+  ChevronDown,
   ClipboardList,
   HeartPulse,
   Mail,
@@ -10,6 +11,8 @@ import {
   Pencil,
   Phone,
   Pill,
+  Sparkles,
+  Trash2,
   UserX,
 } from "lucide-react";
 import { useData } from "../../context/DataContext";
@@ -32,7 +35,9 @@ export function PatientDetails() {
     records,
     appointments,
     prescriptions,
+    aiConsultations,
     deletePatient,
+    deleteAiConsultation,
   } = useData();
   const { toast } = useToast();
 
@@ -56,6 +61,13 @@ export function PatientDetails() {
   const patientPrescriptions = useMemo(
     () => prescriptions.filter((p) => p.patientId === id),
     [prescriptions, id],
+  );
+  const patientConsultations = useMemo(
+    () =>
+      aiConsultations
+        .filter((c) => c.patientId === id)
+        .sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? ""))),
+    [aiConsultations, id],
   );
 
   const doctorName = (doctorId) => {
@@ -87,6 +99,7 @@ export function PatientDetails() {
     { key: "records", label: "Medical Records", icon: ClipboardList, count: patientRecords.length },
     { key: "appointments", label: "Appointments", icon: CalendarDays, count: patientAppointments.length },
     { key: "prescriptions", label: "Prescriptions", icon: Pill, count: patientPrescriptions.length },
+    { key: "ai", label: "AI Consultations", icon: Sparkles, count: patientConsultations.length },
   ];
 
   const currentPatient = patient;
@@ -328,6 +341,114 @@ export function PatientDetails() {
                     {statusLabel(p.status)}
                   </Badge>
                 </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
+      {tab === "ai" && (
+        <Card>
+          <CardHeader
+            title="AI consultations"
+            subtitle={`${patientConsultations.length} saved AI-assisted consultations`}
+          />
+          {patientConsultations.length === 0 ? (
+            <EmptyState
+              icon={<Sparkles size={22} />}
+              title="No AI consultations yet"
+              message="AI consultations saved from the record or prescription forms will appear here."
+            />
+          ) : (
+            <div className="space-y-2 px-5 py-4">
+              {patientConsultations.map((c) => (
+                <details key={c.id} className="group rounded-lg border border-slate-200 dark:border-slate-700">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Sparkles size={15} className="shrink-0 text-primary-500" />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
+                          {c.symptoms || "AI consultation"}
+                        </p>
+                        <p className="text-xs text-slate-400">{formatDateTime(c.createdAt)}</p>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      {c.diagnoses?.length > 0 && (
+                        <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[11px] font-medium text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">
+                          {c.diagnoses.length} diagnosis{c.diagnoses.length === 1 ? "" : "es"}
+                        </span>
+                      )}
+                      {c.prescriptions?.length > 0 && (
+                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                          {c.prescriptions.length} med{c.prescriptions.length === 1 ? "" : "s"}
+                        </span>
+                      )}
+                      <ChevronDown size={15} className="text-slate-400 transition-transform group-open:rotate-180" />
+                    </div>
+                  </summary>
+                  <div className="space-y-2 border-t border-slate-100 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:text-slate-300">
+                    {c.doctorName && <p className="text-xs text-slate-400 dark:text-slate-500">Saved by {c.doctorName}</p>}
+                    {c.summary && <p className="leading-relaxed">{c.summary}</p>}
+                    {c.diagnoses?.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Differential diagnoses</p>
+                        <ul className="mt-1 space-y-0.5">
+                          {c.diagnoses.map((d, i) => (
+                            <li key={i}>• {d.name}{d.code ? ` (${d.code})` : ""} — {d.likelihood}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {c.prescriptions?.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Suggested prescriptions</p>
+                        <ul className="mt-1 space-y-0.5">
+                          {c.prescriptions.map((rx, i) => (
+                            <li key={i}>
+                              • {rx.name}{rx.dosage ? ` — ${rx.dosage}` : ""}{rx.frequency ? ` (${rx.frequency})` : ""}
+                              {rx.instructions ? `: ${rx.instructions}` : ""}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {c.referrals?.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Referrals</p>
+                        <ul className="mt-1 space-y-0.5">
+                          {c.referrals.map((r, i) => (
+                            <li key={i}>• {r.specialty} ({r.urgency}) — {r.reason}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {c.safetyWarnings?.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-rose-500">Safety warnings</p>
+                        <ul className="mt-1 space-y-0.5">
+                          {c.safetyWarnings.map((w, i) => (
+                            <li key={i}>• {w}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {c.notes && <p className="text-xs text-slate-400 dark:text-slate-500">Clinician notes: {c.notes}</p>}
+                    <div className="pt-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={<Trash2 size={13} />}
+                        onClick={() => {
+                          deleteAiConsultation(c.id);
+                          toast("AI consultation removed.");
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  </div>
+                </details>
               ))}
             </div>
           )}

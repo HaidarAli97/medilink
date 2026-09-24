@@ -5,14 +5,57 @@ import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Input, Select, Textarea } from "../ui/Field";
 import { fullName } from "../../lib/utils";
+import { AiAssistPanel } from "../ai/AiAssistPanel";
 
 export function RecordForm({
   open,
   onClose,
   defaultPatientId,
 }) {
-  const { patients, doctors, addRecord } = useData();
+  const { patients, doctors, addRecord, aiConsultations, addAiConsultation } = useData();
   const { toast } = useToast();
+
+  function applyDiagnosis(d) {
+    const label = [d.code, d.name].filter(Boolean).join(" ");
+    setForm((f) => {
+      const existing = f.diagnosis
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      if (existing.some((s) => s.includes(d.name.toLowerCase()))) return f;
+      return { ...f, diagnosis: [f.diagnosis.trim(), label].filter(Boolean).join(", ") };
+    });
+    toast(`Diagnosis applied: ${label}`);
+  }
+
+  function applyPrescription(rx) {
+    const line = [rx.name, rx.dosage, [rx.instructions, rx.frequency].filter(Boolean).join(". ")]
+      .map((s) => (s || "").trim())
+      .join(" | ");
+    setForm((f) => ({ ...f, medications: [f.medications.trim(), line].filter(Boolean).join("\n") }));
+    toast(`Prescription added: ${rx.name}`);
+  }
+
+  function applyReferral(r) {
+    setForm((f) => ({
+      ...f,
+      notes: [f.notes.trim(), `Suggested referral — ${r.specialty} (${r.urgency}): ${r.reason}`]
+        .filter(Boolean)
+        .join("\n"),
+    }));
+    toast(`Referral added: ${r.specialty}`);
+  }
+
+  function saveConsultation(data) {
+    const doctor = doctors.find((d) => d.id === form.doctorId);
+    const saved = addAiConsultation({
+      ...data,
+      doctorId: form.doctorId,
+      doctorName: doctor ? `Dr. ${fullName(doctor.firstName, doctor.lastName)}` : "",
+    });
+    toast("AI consultation saved to patient chart.");
+    return saved;
+  }
   const [form, setForm] = useState({
     patientId: defaultPatientId ?? patients[0]?.id ?? "",
     doctorId: doctors[0]?.id ?? "",
@@ -25,6 +68,7 @@ export function RecordForm({
   });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
+  const selectedPatient = patients.find((p) => p.id === form.patientId);
 
   function validate() {
     const next = {};
@@ -178,6 +222,15 @@ export function RecordForm({
           placeholder="Additional clinical notes"
           value={form.notes}
           onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+        />
+
+        <AiAssistPanel
+          patient={selectedPatient}
+          consultations={aiConsultations}
+          onSave={saveConsultation}
+          onApplyDiagnosis={applyDiagnosis}
+          onApplyPrescription={applyPrescription}
+          onApplyReferral={applyReferral}
         />
       </form>
     </Modal>

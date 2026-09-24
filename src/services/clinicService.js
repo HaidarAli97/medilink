@@ -40,6 +40,7 @@ export const CLINIC_COLLECTIONS = {
   doctors: "doctors",
   records: "medicalRecords",
   prescriptions: "prescriptions",
+  aiConsultations: "aiConsultations",
 };
 
 /** Drop undefined values — Firestore rejects them. */
@@ -99,6 +100,20 @@ export function subscribeRecords(collectionName, { role, linkedId }, onData, onE
       ? (c) => query(c, where(field, "==", linkedId))
       : undefined;
   return subscribeCollection(collectionName, queryFn, onData, onError);
+}
+
+/**
+ * Subscribe to the AI consultation records the signed-in user may see:
+ * admins all; a doctor theirs (the consultations they saved); a patient their
+ * own. Scoped query must match firestore.rules.
+ */
+export function subscribeAiConsultations({ role, linkedId }, onData, onError) {
+  const field = role === "doctor" ? "doctorId" : "patientId";
+  const queryFn =
+    role === "patient" || role === "doctor"
+      ? (c) => query(c, where(field, "==", linkedId))
+      : undefined;
+  return subscribeCollection(CLINIC_COLLECTIONS.aiConsultations, queryFn, onData, onError);
 }
 
 /** Create or overwrite a document, using its client id as the doc id. */
