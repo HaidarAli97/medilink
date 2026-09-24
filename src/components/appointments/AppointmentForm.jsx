@@ -62,7 +62,7 @@ export function AppointmentForm({
     return Object.keys(next).length === 0;
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     if (!validate()) return;
     setSaving(true);
@@ -76,20 +76,23 @@ export function AppointmentForm({
       reason: form.reason.trim(),
       notes: form.notes.trim() || undefined,
     };
-    setTimeout(() => {
+    try {
       if (appointment) {
-        updateAppointment(appointment.id, {
+        await updateAppointment(appointment.id, {
           ...payload,
           status: appointment.status,
         });
         toast("Appointment rescheduled.");
       } else {
-        addAppointment({ ...payload, status: "confirmed" });
+        await addAppointment({ ...payload, status: "confirmed" });
         toast("Appointment scheduled successfully.");
       }
+    } catch {
+      toast("Could not save the appointment. Please try again.", "error");
+    } finally {
       setSaving(false);
       onClose();
-    }, 500);
+    }
   }
 
   return (

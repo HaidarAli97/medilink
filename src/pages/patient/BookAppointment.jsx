@@ -75,12 +75,12 @@ export function BookAppointment() {
     return Object.keys(next).length === 0;
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     if (!validate()) return;
     setSaving(true);
-    setTimeout(() => {
-      requestAppointment({
+    try {
+      await requestAppointment({
         patientId: patient.id,
         doctorId: form.doctorId,
         date: form.date,
@@ -89,10 +89,13 @@ export function BookAppointment() {
         type: form.type,
         reason: form.reason.trim(),
       });
-      setSaving(false);
       setSubmitted(true);
       toast("Appointment request submitted — awaiting confirmation.");
-    }, 500);
+    } catch {
+      toast("Could not submit the request. Please try again.", "error");
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (submitted) {

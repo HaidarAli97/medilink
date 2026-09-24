@@ -82,7 +82,10 @@ service cloud.firestore {
              ['uid', 'fullName', 'email', 'role', 'phone', 'profileImage', 'createdAt', 'linkedId'])
         && request.resource.data.uid == uid
         && request.resource.data.role == 'patient'
-        && request.resource.data.linkedId == null;
+        // Self-registration may link only to the patient record that is being
+        // created under the same uid (self-link); otherwise it must be null.
+        && (request.resource.data.linkedId == null
+            || request.resource.data.linkedId == uid);
 
       // Update: admins may change anything (incl. role/linkedId — this is how
       // roles are provisioned). A non-admin owner may edit only display fields;
@@ -122,6 +125,78 @@ service cloud.firestore {
         || (isSignedIn() && resource.data.patientId == myLinkedId());
 
       // Delete: admins only (used by the patient/doctor removal cascade).
+      allow delete: if isAdmin();
+    }
+
+    // ---- patients: patients/{id} ------------------------------------------
+    // Self-registered accounts create their own record (id == auth uid) and read
+    // only their own. Doctors and admins may read the roster; admins fully manage.
+    match /patients/{id} {
+      allow read: if isAdmin()
+        || isDoctor()
+        || (isSignedIn() && id == myLinkedId());
+
+      // Self-registration (signUp) creates the linked patient record atomically
+      // with the users/{uid} profile; admins create for anyone.
+      allow create: if isAdmin()
+        || (isSignedIn() && id == request.auth.uid);
+
+      allow update: if isAdmin()
+        // A doctor may edit a patient's record, a patient only their own.
+        || isDoctor()
+        || (isSignedIn() && id == myLinkedId());
+
+      allow delete: if isAdmin();
+    }
+
+    // ---- doctors: doctors/{id} --------------------------------------------
+    // The roster is readable by admins, patients (find-a-doctor) and the doctor
+    // him/herself. Only admins (and the doctor editing their own profile) write.
+    match /doctors/{id} {
+      allow read: if isAdmin()
+        || isSignedIn()
+        || isDoctor()
+        || (isSignedIn() && id == myLinkedId());
+
+      allow create: if isAdmin();
+
+      allow update: if isAdmin()
+        || (isDoctor() && id == myLinkedId());
+
+      allow delete: if isAdmin();
+    }
+
+    // ---- medical records: medicalRecords/{id} -----------------------------
+    // A patient sees their own; a doctor sees/manages their own patients' records
+    // (scoped by the doctorId the record belongs to). Admins see all.
+    match /medicalRecords/{id} {
+      allow read: if isAdmin()
+        || (isDoctor()   && resource.data.doctorId  == myLinkedId())
+        || (isSignedIn() && resource.data.patientId == myLinkedId());
+
+      allow create: if isAdmin()
+        || (isDoctor() && request.resource.data.doctorId == myLinkedId());
+
+      allow update: if isAdmin()
+        || (isDoctor() && resource.data.doctorId == myLinkedId());
+
+      allow delete: if isAdmin();
+    }
+
+    // ---- prescriptions: prescriptions/{id} --------------------------------
+    // Mirrors medicalRecords: a patient reads their own; a doctor manages the
+    // prescriptions they wrote; admins see all.
+    match /prescriptions/{id} {
+      allow read: if isAdmin()
+        || (isDoctor()   && resource.data.doctorId  == myLinkedId())
+        || (isSignedIn() && resource.data.patientId == myLinkedId());
+
+      allow create: if isAdmin()
+        || (isDoctor() && request.resource.data.doctorId == myLinkedId());
+
+      allow update: if isAdmin()
+        || (isDoctor() && resource.data.doctorId == myLinkedId());
+
       allow delete: if isAdmin();
     }
 

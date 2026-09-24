@@ -81,6 +81,22 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
   );
   await setDoc(doc(db, "appointments", "appt-1"), appointment("pat-001", "doc-001"));
   await setDoc(doc(db, "appointments", "appt-2"), appointment("pat-002", "doc-002"));
+  // Domain docs the linked identities act as.
+  await setDoc(doc(db, "patients", "pat-001"), {
+    id: "pat-001", firstName: "Emily", lastName: "Johnson", status: "active",
+  });
+  await setDoc(doc(db, "patients", "pat-002"), {
+    id: "pat-002", firstName: "Daniel", lastName: "Carter", status: "active",
+  });
+  await setDoc(doc(db, "doctors", "doc-001"), {
+    id: "doc-001", firstName: "Sarah", lastName: "Mitchell",
+  });
+  await setDoc(doc(db, "medicalRecords", "rec-1"), {
+    id: "rec-1", patientId: "pat-001", doctorId: "doc-001",
+  });
+  await setDoc(doc(db, "prescriptions", "rx-1"), {
+    id: "rx-1", patientId: "pat-001", doctorId: "doc-001",
+  });
 });
 
 const patient = testEnv.authenticatedContext("patient-1", { email: "patient-1@example.com" }).firestore();
@@ -112,6 +128,24 @@ await expect(
     setDoc(
       doc(testEnv.authenticatedContext("fresh-1").firestore(), "users", "fresh-1"),
       profile("fresh-1"),
+    ),
+  ),
+);
+await expect(
+  "new user CAN self-link to their own patient record (id == uid)",
+  assertSucceeds(
+    setDoc(
+      doc(testEnv.authenticatedContext("fresh-2").firestore(), "users", "fresh-2"),
+      profile("fresh-2", { linkedId: "fresh-2" }),
+    ),
+  ),
+);
+await expect(
+  "user CANNOT self-link to another user's record",
+  assertFails(
+    setDoc(
+      doc(testEnv.authenticatedContext("fresh-3").firestore(), "users", "fresh-3"),
+      profile("fresh-3", { linkedId: "pat-001" }),
     ),
   ),
 );
@@ -278,10 +312,101 @@ await expect(
   assertFails(setDoc(doc(anon, "appointments", "appt-anon"), appointment("pat-001", "doc-001"))),
 );
 
-// --- Un-migrated clinical collections: still default-deny ----------------
+// --- Patients -------------------------------------------------------------
 await expect(
-  "admin CANNOT touch un-migrated clinical paths (default deny)",
-  assertFails(setDoc(doc(admin, "medicalRecords", "rec-1"), { patientId: "pat-001" })),
+  "patient CAN read their own patient record",
+  assertSucceeds(getDoc(doc(p1, "patients", "pat-001"))),
+);
+await expect(
+  "patient CANNOT read another patient's record",
+  assertFails(getDoc(doc(p1, "patients", "pat-002"))),
+);
+await expect(
+  "patient CANNOT create another patient's record",
+  assertFails(setDoc(doc(p1, "patients", "victim-1"), { id: "victim-1", firstName: "X" })),
+);
+await expect(
+  "patient CAN create (self-register) their own record (id == uid)",
+  assertSucceeds(
+    setDoc(
+      doc(testEnv.authenticatedContext("self-1").firestore(), "patients", "self-1"),
+      { id: "self-1", firstName: "New", lastName: "User", status: "active" },
+    ),
+  ),
+);
+await expect(
+  "doctor CAN read the patient roster",
+  assertSucceeds(getDoc(doc(d1, "patients", "pat-001"))),
+);
+await expect(
+  "patient CANNOT delete a patient record",
+  assertFails(deleteDoc(doc(p1, "patients", "pat-001"))),
+);
+await expect(
+  "admin CAN delete a patient record",
+  assertSucceeds(deleteDoc(doc(admin, "patients", "pat-002"))),
+);
+
+// --- Doctors --------------------------------------------------------------
+await expect(
+  "patient CAN read the doctor roster (find-a-doctor)",
+  assertSucceeds(getDoc(doc(p1, "doctors", "doc-001"))),
+);
+await expect(
+  "admin CAN create a doctor",
+  assertSucceeds(setDoc(doc(admin, "doctors", "doc-x"), { id: "doc-x", firstName: "Z" })),
+);
+await expect(
+  "patient CANNOT create a doctor",
+  assertFails(setDoc(doc(p1, "doctors", "doc-y"), { id: "doc-y", firstName: "Z" })),
+);
+await expect(
+  "doctor CAN update their own doctor record",
+  assertSucceeds(updateDoc(doc(d1, "doctors", "doc-001"), { firstName: "S." })),
+);
+await expect(
+  "doctor CANNOT delete a doctor record",
+  assertFails(deleteDoc(doc(d1, "doctors", "doc-001"))),
+);
+
+// --- Medical records / prescriptions --------------------------------------
+await expect(
+  "patient CAN read their own medical record",
+  assertSucceeds(getDoc(doc(p1, "medicalRecords", "rec-1"))),
+);
+await expect(
+  "doctor CAN read their own medical record",
+  assertSucceeds(getDoc(doc(d1, "medicalRecords", "rec-1"))),
+);
+await expect(
+  "doctor CAN create a record for their patient",
+  assertSucceeds(
+    setDoc(doc(d1, "medicalRecords", "rec-new"), {
+      id: "rec-new", patientId: "pat-001", doctorId: "doc-001",
+    }),
+  ),
+);
+await expect(
+  "doctor CANNOT create a record for another doctor's patient",
+  assertFails(
+    setDoc(doc(d1, "medicalRecords", "rec-other"), {
+      id: "rec-other", patientId: "pat-002", doctorId: "doc-002",
+    }),
+  ),
+);
+await expect(
+  "patient CAN read their own prescription",
+  assertSucceeds(getDoc(doc(p1, "prescriptions", "rx-1"))),
+);
+await expect(
+  "patient CANNOT delete their own prescription",
+  assertFails(deleteDoc(doc(p1, "prescriptions", "rx-1"))),
+);
+await expect(
+  "admin CAN write a prescription",
+  assertSucceeds(setDoc(doc(admin, "prescriptions", "rx-admin"), {
+    id: "rx-admin", patientId: "pat-001", doctorId: "doc-001",
+  })),
 );
 
 await testEnv.cleanup();

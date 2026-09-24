@@ -13,7 +13,7 @@ import {
   signOut as firebaseSignOut,
   onAuthStateChanged,
 } from "firebase/auth";
-import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, updateDoc, writeBatch } from "firebase/firestore";
 import { ROLES } from "../config/roles";
 import { getFirebaseAuth, getFirebaseDb } from "./firebase";
 
@@ -73,9 +73,30 @@ async function loadOrCreateProfile(fbUser) {
     phone: "",
     profileImage: null,
     createdAt: new Date().toISOString(),
-    linkedId: null,
+    linkedId: fbUser.uid,
   };
-  await setDoc(ref, profile);
+  // Self-heal BOTH the users/{uid} profile and the patients/{uid} record so a
+  // console-provisioned or orphaned patient account is usable immediately.
+  const batch = writeBatch(getFirebaseDb());
+  batch.set(ref, profile);
+  batch.set(doc(getFirebaseDb(), "patients", fbUser.uid), {
+    id: fbUser.uid,
+    firstName: fbUser.displayName?.split(" ")[0] ?? "",
+    lastName: fbUser.displayName?.split(" ").slice(1).join(" ") ?? "",
+    phone: "",
+    email: fbUser.email ?? "",
+    dob: "",
+    gender: "Other",
+    bloodGroup: "O+",
+    address: "",
+    allergies: [],
+    conditions: [],
+    insurance: "",
+    emergencyContact: "",
+    status: "active",
+    registeredAt: new Date().toISOString().slice(0, 10),
+  });
+  await batch.commit();
   return profile;
 }
 
@@ -127,6 +148,8 @@ export async function signUp({ fullName, email, password }) {
       email.trim(),
       password,
     );
+    const [firstName = "", ...rest] = fullName.trim().split(/\s+/);
+    const lastName = rest.join(" ").trim();
     const profile = {
       uid: cred.user.uid,
       fullName: fullName.trim(),
@@ -135,9 +158,30 @@ export async function signUp({ fullName, email, password }) {
       phone: "",
       profileImage: null,
       createdAt: new Date().toISOString(),
-      linkedId: null,
+      linkedId: cred.user.uid,
     };
-    await setDoc(doc(getFirebaseDb(), "users", cred.user.uid), profile);
+    // Atomically create the user's profile AND their patient record so the
+    // account is immediately linked to a real (persisted) patient document.
+    const batch = writeBatch(getFirebaseDb());
+    batch.set(doc(getFirebaseDb(), "users", cred.user.uid), profile);
+    batch.set(doc(getFirebaseDb(), "patients", cred.user.uid), {
+      id: cred.user.uid,
+      firstName,
+      lastName,
+      phone: "",
+      email: email.trim(),
+      dob: "",
+      gender: "Other",
+      bloodGroup: "O+",
+      address: "",
+      allergies: [],
+      conditions: [],
+      insurance: "",
+      emergencyContact: "",
+      status: "active",
+      registeredAt: new Date().toISOString().slice(0, 10),
+    });
+    await batch.commit();
     await firebaseSignOut(getFirebaseAuth());
     return profile;
   } catch (err) {

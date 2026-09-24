@@ -51,7 +51,7 @@ export function PrescriptionForm({
     return Object.keys(next).length === 0;
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     if (!validate()) return;
     setSaving(true);
@@ -65,17 +65,20 @@ export function PrescriptionForm({
       refills: Math.max(0, parseInt(form.refills, 10) || 0),
       status: form.status,
     };
-    setTimeout(() => {
+    try {
       if (prescription) {
-        updatePrescription(prescription.id, payload);
+        await updatePrescription(prescription.id, payload);
         toast("Prescription updated.");
       } else {
-        addPrescription({ ...payload, date: new Date().toISOString() });
+        await addPrescription({ ...payload, date: new Date().toISOString() });
         toast("Prescription issued.");
       }
+    } catch {
+      toast("Could not save the prescription. Please try again.", "error");
+    } finally {
       setSaving(false);
       onClose();
-    }, 500);
+    }
   }
 
   return (

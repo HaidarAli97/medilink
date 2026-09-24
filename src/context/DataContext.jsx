@@ -23,32 +23,42 @@ import {
   subscribeAppointments,
   updateAppointmentDoc,
 } from "../services/appointmentsService";
+import {
+  CLINIC_COLLECTIONS,
+  deleteDocById,
+  deleteDocsByField,
+  patchDoc,
+  seedClinicData,
+  subscribeDoctors,
+  subscribePatients,
+  subscribeRecords,
+  writeDoc,
+} from "../services/clinicService";
 import { useAuth } from "./AuthContext";
 
 const DataContext = createContext(null);
 
-/** Fire-and-forget a Firestore write; surface failures in dev (e.g. rules not yet deployed). */
+/** Fire-and-forget a Firestore write; log failures so they're never invisible. */
 function warnWrite(promise) {
   promise?.catch?.((err) => {
-    if (import.meta.env?.DEV) {
-      console.error("[MediLink] appointment write failed:", err);
-    }
+    console.error("[MediLink] Firestore write failed:", err);
   });
+  return promise;
 }
 
 export function DataProvider({ children }) {
   const { user, loading } = useAuth();
-  const [patients, setPatients] = useState(seedPatients);
-  const [doctors, setDoctors] = useState(seedDoctors);
+  const [patients, setPatients] = useState(isFirebaseConfigured ? [] : seedPatients);
+  const [doctors, setDoctors] = useState(isFirebaseConfigured ? [] : seedDoctors);
   // Appointments are the one collection persisted in Firestore. When Firebase is
   // configured we start empty and let the subscription below fill state; in mock
   // mode (and during SSR, where effects don't run) we use the seed as before.
   const [appointments, setAppointments] = useState(
     isFirebaseConfigured ? [] : seedAppointments,
   );
-  const [records, setRecords] = useState(seedRecords);
+  const [records, setRecords] = useState(isFirebaseConfigured ? [] : seedRecords);
   const [prescriptions, setPrescriptions] =
-    useState(seedPrescriptions);
+    useState(isFirebaseConfigured ? [] : seedPrescriptions);
   const [notifications, setNotifications] =
     useState(seedNotifications);
   const [activities, setActivities] = useState(seedActivities);
@@ -75,6 +85,52 @@ export function DataProvider({ children }) {
     return unsubscribe;
   }, [user, loading]);
 
+  // Live Firestore feeds for the clinical domain collections (patients, doctors,
+  // records, prescriptions), each scoped to match firestore.rules. No-ops in mock
+  // mode / SSR, where the seed arrays are used instead. Logs write failures in dev.
+  useEffect(() => {
+    if (!isFirebaseConfigured || loading) return;
+    if (!user) {
+      setPatients([]);
+      setDoctors([]);
+      setRecords([]);
+      setPrescriptions([]);
+      return;
+    }
+    const scope = { role: user.role, linkedId: user.linkedId };
+    const onError = (collectionName) => (err) => {
+      if (import.meta.env?.DEV) {
+        console.error(`[MediLink] ${collectionName} subscription error:`, err);
+      }
+    };
+    const unsubscribers = [
+      subscribePatients(scope, setPatients, onError("patients")),
+      subscribeDoctors(scope, setDoctors, onError("doctors")),
+      subscribeRecords(CLINIC_COLLECTIONS.records, scope, setRecords, onError("records")),
+      subscribeRecords(
+        CLINIC_COLLECTIONS.prescriptions,
+        scope,
+        setPrescriptions,
+        onError("prescriptions"),
+      ),
+    ];
+    return () => unsubscribers.forEach((u) => u?.());
+  }, [user, loading]);
+
+  // Seed the demo roster into Firestore once, as the admin. Idempotent (only
+  // writes when a collection is empty), so it never overwrites real data. Keeps
+  // the UI populated for a brand-new database. No-op for non-admins / mock / SSR.
+  useEffect(() => {
+    if (!isFirebaseConfigured || loading) return;
+    if (!user || user.role !== "admin") return;
+    seedClinicData().catch((err) => {
+      if (import.meta.env?.DEV) {
+        console.error("[MediLink] demo data seed failed (rules not deployed?):", err);
+      }
+    });
+  }, [user, loading]);
+
+
   const logActivity = useCallback(
     (action, detail, type) => {
       setActivities((prev) => [
@@ -92,40 +148,59 @@ export function DataProvider({ children }) {
         id: uid("pat"),
         registeredAt: new Date().toISOString().slice(0, 10),
       };
-      setPatients((prev) => [newPatient, ...prev]);
+      let write;
+      if (isFirebaseConfigured) {
+        write = writeDoc(CLINIC_COLLECTIONS.patients, newPatient);
+        warnWrite(write);
+      } else {
+        setPatients((prev) => [newPatient, ...prev]);
+      }
       logActivity(
         "New patient registered",
         `${newPatient.firstName} ${newPatient.lastName} added to the system`,
         "patient",
       );
-      return newPatient;
+      return write ?? newPatient;
     },
     [logActivity],
   );
 
   const updatePatient = useCallback(
     (id, patient) => {
-      setPatients((prev) =>
-        prev.map((p) => (p.id === id ? { ...p, ...patient } : p)),
-      );
+      let write;
+      if (isFirebaseConfigured) {
+        write = patchDoc(CLINIC_COLLECTIONS.patients, id, patient);
+        warnWrite(write);
+      } else {
+        setPatients((prev) =>
+          prev.map((p) => (p.id === id ? { ...p, ...patient } : p)),
+        );
+      }
+      return write;
     },
     [],
   );
 
   const deletePatient = useCallback(
     (id) => {
-      setPatients((prev) => prev.filter((p) => p.id !== id));
       if (isFirebaseConfigured) {
+        warnWrite(deleteDocById(CLINIC_COLLECTIONS.patients, id));
         warnWrite(deleteAppointmentsByField("patientId", id));
       } else {
+        setPatients((prev) => prev.filter((p) => p.id !== id));
         setAppointments((prev) =>
           prev.filter((a) => a.patientId !== id),
         );
       }
-      setRecords((prev) => prev.filter((r) => r.patientId !== id));
-      setPrescriptions((prev) =>
-        prev.filter((r) => r.patientId !== id),
-      );
+      if (isFirebaseConfigured) {
+        warnWrite(deleteDocsByField(CLINIC_COLLECTIONS.records, "patientId", id));
+        warnWrite(deleteDocsByField(CLINIC_COLLECTIONS.prescriptions, "patientId", id));
+      } else {
+        setRecords((prev) => prev.filter((r) => r.patientId !== id));
+        setPrescriptions((prev) =>
+          prev.filter((r) => r.patientId !== id),
+        );
+      }
       logActivity("Patient removed", "Patient record deleted from the system", "patient");
     },
     [logActivity],
@@ -134,32 +209,46 @@ export function DataProvider({ children }) {
   const addDoctor = useCallback(
     (doctor) => {
       const newDoctor = { ...doctor, id: uid("doc") };
-      setDoctors((prev) => [...prev, newDoctor]);
+      let write;
+      if (isFirebaseConfigured) {
+        write = writeDoc(CLINIC_COLLECTIONS.doctors, newDoctor);
+        warnWrite(write);
+      } else {
+        setDoctors((prev) => [...prev, newDoctor]);
+      }
       logActivity(
         "Doctor added",
         `Dr. ${newDoctor.firstName} ${newDoctor.lastName} joined the clinic`,
         "system",
       );
-      return newDoctor;
+      return write ?? newDoctor;
     },
     [logActivity],
   );
 
   const updateDoctor = useCallback(
     (id, doctor) => {
-      setDoctors((prev) =>
-        prev.map((d) => (d.id === id ? { ...d, ...doctor } : d)),
-      );
+      let write;
+      if (isFirebaseConfigured) {
+        write = patchDoc(CLINIC_COLLECTIONS.doctors, id, doctor);
+        warnWrite(write);
+      } else {
+        setDoctors((prev) =>
+          prev.map((d) => (d.id === id ? { ...d, ...doctor } : d)),
+        );
+      }
+      return write;
     },
     [],
   );
 
   const deleteDoctor = useCallback(
     (id) => {
-      setDoctors((prev) => prev.filter((d) => d.id !== id));
       if (isFirebaseConfigured) {
+        warnWrite(deleteDocById(CLINIC_COLLECTIONS.doctors, id));
         warnWrite(deleteAppointmentsByField("doctorId", id));
       } else {
+        setDoctors((prev) => prev.filter((d) => d.id !== id));
         setAppointments((prev) =>
           prev.filter((a) => a.doctorId !== id),
         );
@@ -175,8 +264,10 @@ export function DataProvider({ children }) {
         id: uid("appt"),
         createdAt: new Date().toISOString(),
       };
+      let write;
       if (isFirebaseConfigured) {
-        warnWrite(createAppointmentDoc(newAppointment));
+        write = createAppointmentDoc(newAppointment);
+        warnWrite(write);
       } else {
         setAppointments((prev) => [...prev, newAppointment]);
       }
@@ -189,20 +280,23 @@ export function DataProvider({ children }) {
         } — ${appointment.date} at ${appointment.time}`,
         "appointment",
       );
-      return newAppointment;
+      return write ?? newAppointment;
     },
     [logActivity, patients, doctors],
   );
 
   const updateAppointment = useCallback(
     (id, appointment) => {
+      let write;
       if (isFirebaseConfigured) {
-        warnWrite(updateAppointmentDoc(id, appointment));
+        write = updateAppointmentDoc(id, appointment);
+        warnWrite(write);
       } else {
         setAppointments((prev) =>
           prev.map((a) => (a.id === id ? { ...a, ...appointment } : a)),
         );
       }
+      return write;
     },
     [],
   );
@@ -246,8 +340,10 @@ export function DataProvider({ children }) {
         status: "pending",
         createdAt: new Date().toISOString(),
       };
+      let write;
       if (isFirebaseConfigured) {
-        warnWrite(createAppointmentDoc(newAppointment));
+        write = createAppointmentDoc(newAppointment);
+        warnWrite(write);
       } else {
         setAppointments((prev) => [...prev, newAppointment]);
       }
@@ -259,7 +355,7 @@ export function DataProvider({ children }) {
         } — ${appointment.date} at ${appointment.time}`,
         "appointment",
       );
-      return newAppointment;
+      return write ?? newAppointment;
     },
     [logActivity, doctors],
   );
@@ -291,8 +387,14 @@ export function DataProvider({ children }) {
   const addRecord = useCallback(
     (record) => {
       const newRecord = { ...record, id: uid("rec") };
-      setRecords((prev) => [newRecord, ...prev]);
-      return newRecord;
+      let write;
+      if (isFirebaseConfigured) {
+        write = writeDoc(CLINIC_COLLECTIONS.records, newRecord);
+        warnWrite(write);
+      } else {
+        setRecords((prev) => [newRecord, ...prev]);
+      }
+      return write ?? newRecord;
     },
     [],
   );
@@ -300,7 +402,13 @@ export function DataProvider({ children }) {
   const addPrescription = useCallback(
     (prescription) => {
       const newPrescription = { ...prescription, id: uid("rx") };
-      setPrescriptions((prev) => [newPrescription, ...prev]);
+      let write;
+      if (isFirebaseConfigured) {
+        write = writeDoc(CLINIC_COLLECTIONS.prescriptions, newPrescription);
+        warnWrite(write);
+      } else {
+        setPrescriptions((prev) => [newPrescription, ...prev]);
+      }
       const patient = patients.find((p) => p.id === prescription.patientId);
       logActivity(
         "Prescription issued",
@@ -309,23 +417,34 @@ export function DataProvider({ children }) {
         }`,
         "prescription",
       );
-      return newPrescription;
+      return write ?? newPrescription;
     },
     [logActivity, patients],
   );
 
   const updatePrescription = useCallback(
     (id, prescription) => {
-      setPrescriptions((prev) =>
-        prev.map((p) => (p.id === id ? { ...p, ...prescription } : p)),
-      );
+      let write;
+      if (isFirebaseConfigured) {
+        write = patchDoc(CLINIC_COLLECTIONS.prescriptions, id, prescription);
+        warnWrite(write);
+      } else {
+        setPrescriptions((prev) =>
+          prev.map((p) => (p.id === id ? { ...p, ...prescription } : p)),
+        );
+      }
+      return write;
     },
     [],
   );
 
   const deletePrescription = useCallback(
     (id) => {
-      setPrescriptions((prev) => prev.filter((p) => p.id !== id));
+      if (isFirebaseConfigured) {
+        warnWrite(deleteDocById(CLINIC_COLLECTIONS.prescriptions, id));
+      } else {
+        setPrescriptions((prev) => prev.filter((p) => p.id !== id));
+      }
     },
     [],
   );
@@ -341,16 +460,16 @@ export function DataProvider({ children }) {
   }, []);
 
   const resetData = useCallback(() => {
-    setPatients(seedPatients);
-    setDoctors(seedDoctors);
-    // In mock mode, reset appointments to the seed. When Firebase is configured
-    // they live in Firestore and are driven by the subscription, so a local reset
-    // would just be overwritten by the next snapshot — leave the collection as-is.
+    // Domain data lives in Firestore when configured (driven by subscriptions), so
+    // a local reset would just be overwritten by the next snapshot — only reset the
+    // in-memory seed data in mock mode. Notifications/activities stay local either way.
     if (!isFirebaseConfigured) {
+      setPatients(seedPatients);
+      setDoctors(seedDoctors);
       setAppointments(seedAppointments);
+      setRecords(seedRecords);
+      setPrescriptions(seedPrescriptions);
     }
-    setRecords(seedRecords);
-    setPrescriptions(seedPrescriptions);
     setNotifications(seedNotifications);
     setActivities(seedActivities);
   }, []);

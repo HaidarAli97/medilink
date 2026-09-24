@@ -7,6 +7,7 @@ A modern, responsive **clinic management web application** built with React, Vit
 ## Features
 
 - **Authentication** — login, registration, and forgot-password flows built on **Firebase Authentication (Email/Password)**, with user profiles in **Cloud Firestore** (`users/{uid}`). Self-registration always creates a **patient**; doctor/admin roles are provisioned by an administrator (see [Firebase setup](#firebase-setup)). Falls back to a `localStorage` mock only when Firebase isn't configured.
+- **Persistence** — with Firebase configured, the clinical domain data (patients, doctors, medical records, prescriptions, appointments) is stored in **Cloud Firestore** and stays in sync in real time via subscriptions. In mock mode it lives in-memory in the browser. User data (registering, editing your profile, booking appointments, records/prescriptions) persists across sessions.
 - **Dashboard** — total patients, today's appointments, available doctors, pending requests, weekly chart, status breakdown, recent activity and quick actions.
 - **Patients** — list with search & filters, details, add / edit / delete.
 - **Doctors** — profiles, specializations, availability, contact info.
@@ -56,8 +57,9 @@ scripts/
 Authentication runs through `src/services/authService`, which dispatches to a Firebase backend when
 configured and a `localStorage` mock otherwise — see [Firebase setup](#firebase-setup). Clinic data
 (patients, doctors, appointments, records, prescriptions) is decoupled from the UI through
-`DataContext` and currently lives in the in-memory demo layer; to persist it, replace that
-implementation with API/Firestore calls — the rest of the app stays unchanged.
+`DataContext`. With Firebase configured it is read/written to Cloud Firestore in real time
+(`src/services/clinicService.js`, `appointmentsService.js`); otherwise it lives in-memory
+(`src/data/mockData.js`). High-level data flows through `src/data/selectors.js`.
 
 ## Getting started
 
@@ -74,8 +76,8 @@ Authentication and user profiles use **Firebase Authentication (Email/Password)*
 2. **Enable Email/Password.** Firebase console → Authentication → Sign-in method → enable **Email/Password**.
 3. **Create Firestore.** Firebase console → Firestore Database → Create database.
 4. **Provision users.**
-   - **Patients** self-register from the app's Register page (or Authentication → Users). Registration writes a `users/{uid}` profile with role `patient`.
-   - **Doctors / admins** are provisioned by an administrator: create the Auth user (Authentication → Users), then create/edit its `users/{uid}` document in Firestore and set `role` to `doctor` or `admin`. Roles are **never** assignable from the client.
+   - **Patients** self-register from the app's Register page (or Authentication → Users). Registration atomically creates a `users/{uid}` profile **and** a `patients/{uid}` record (linked via `users/{uid}.linkedId`), so the patient's data persists in Firestore.
+   - **Doctors / admins** are provisioned by an administrator: create the Auth user (Authentication → Users), then create/edit its `users/{uid}` document in Firestore and set `role` to `doctor` or `admin`. Set `linkedId` to the doctor's `doctors/{id}` for doctors (null for admins). Roles are **never** assignable from the client.
    - **First admin (bootstrap).** Since no admin exists yet, create the first admin's `users/{uid}` document directly in the Firestore console (console writes bypass the security rules). After that, admins can provision others.
    - If a signed-in account has no profile document, one is created automatically as a least-privilege **patient**.
 5. **Security rules.** The role-based rules live in [`firestore.rules`](firestore.rules) (committed). Deploy them with the Firebase CLI:
@@ -84,9 +86,9 @@ Authentication and user profiles use **Firebase Authentication (Email/Password)*
    firebase deploy --only firestore:rules
    ```
 
-   …or paste the file's contents into Firebase console → Firestore Database → Rules → Publish. They enforce: a user reads only their own profile (admins read any); a user may create only their own profile and only as a `patient`; a user may never change their own role; only admins may change roles, write other profiles, or delete. All non-`users` paths are denied by default.
+   …or paste the file's contents into Firebase console → Firestore Database → Rules → Publish. They enforce: a user reads only their own profile and their own patient data (admins/doctors read the roster); a user may create only their own profile as a `patient` and may link only to their own patient record; a user may never change their own role; only admins may change roles, write other profiles, or delete. All unmatched paths are denied by default.
 
-> **Roles are enforced server-side by Firestore security rules** — a signed-in client can never escalate its own role. Clinic data (patients, appointments, records, prescriptions) currently remains in the in-memory demo layer and is not yet stored in Firestore. This app is a demo and is **not** production-ready for real medical records.
+> **Roles are enforced server-side by Firestore security rules** — a signed-in client can never escalate its own role. Self-registered patients are automatically linked to a persisted `patients/{uid}` record, so their data (appointments, records, prescriptions) synchronizes with Firestore. When a Firebase database is empty, the first admin login seeds the demo roster (doctors/patients/records/prescriptions) idempotently. This app is a demo and is **not** production-ready for real medical records.
 
 ## Build
 

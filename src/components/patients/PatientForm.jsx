@@ -39,11 +39,11 @@ export function PatientForm({
           email: patient.email ?? "",
           address: patient.address ?? "",
           bloodGroup: patient.bloodGroup,
-          allergies: patient.allergies.join(", "),
+          allergies: (patient.allergies ?? []).join(", "),
           status: patient.status,
           emergencyContact: patient.emergencyContact ?? "",
           insurance: patient.insurance ?? "",
-          conditions: patient.conditions.join(", "),
+          conditions: (patient.conditions ?? []).join(", "),
         }
       : emptyForm,
   );
@@ -64,7 +64,7 @@ export function PatientForm({
     return Object.keys(next).length === 0;
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     if (!validate()) return;
     setSaving(true);
@@ -89,17 +89,20 @@ export function PatientForm({
         .map((s) => s.trim())
         .filter(Boolean),
     };
-    setTimeout(() => {
+    try {
       if (patient) {
-        updatePatient(patient.id, payload);
+        await updatePatient(patient.id, payload);
         toast("Patient updated successfully.");
       } else {
-        addPatient(payload);
+        await addPatient(payload);
         toast("Patient registered successfully.");
       }
+    } catch {
+      toast("Could not save the patient. Please try again.", "error");
+    } finally {
       setSaving(false);
       onClose();
-    }, 500);
+    }
   }
 
   function set(

@@ -36,7 +36,7 @@ export function RecordForm({
     return Object.keys(next).length === 0;
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     if (!validate()) return;
     setSaving(true);
@@ -61,12 +61,15 @@ export function RecordForm({
         }),
       notes: form.notes.trim() || undefined,
     };
-    setTimeout(() => {
-      addRecord(payload);
+    try {
+      await addRecord(payload);
       toast("Medical record added.");
+    } catch {
+      toast("Could not add the medical record. Please try again.", "error");
+    } finally {
       setSaving(false);
       onClose();
-    }, 500);
+    }
   }
 
   return (

@@ -91,9 +91,11 @@ export function PatientDetails() {
 
   const currentPatient = patient;
 
-  const age = Math.floor(
-    (Date.now() - new Date(currentPatient.dob).getTime()) / (1000 * 60 * 60 * 24 * 365.25),
-  );
+  const age = currentPatient.dob
+    ? Math.floor(
+        (Date.now() - new Date(currentPatient.dob).getTime()) / (1000 * 60 * 60 * 24 * 365.25),
+      )
+    : null;
 
   function confirmDelete() {
     deletePatient(currentPatient.id);
@@ -133,7 +135,7 @@ export function PatientDetails() {
               </Badge>
             </div>
             <p className="mt-0.5 text-sm text-slate-500">
-              Patient ID · {patient.id.toUpperCase()} · {age} years old
+              Patient ID · {patient.id.toUpperCase()} · {age === null ? "—" : `${age} years old`}
             </p>
             <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-600">
               <span className="inline-flex items-center gap-1.5">
@@ -181,7 +183,10 @@ export function PatientDetails() {
           <Card>
             <CardHeader title="Demographics" />
             <CardBody className="space-y-4">
-              <InfoRow label="Date of birth" value={`${formatDate(patient.dob)} (${age} yrs)`} />
+              <InfoRow
+                label="Date of birth"
+                value={patient.dob ? `${formatDate(patient.dob)} (${age} yrs)` : "—"}
+              />
               <InfoRow label="Gender" value={patient.gender} />
               <InfoRow label="Blood group" value={patient.bloodGroup} />
               <InfoRow label="Registered" value={formatDate(patient.registeredAt)} />
@@ -194,7 +199,7 @@ export function PatientDetails() {
             <Card>
               <CardHeader title="Medical conditions" />
               <CardBody>
-                {patient.conditions.length === 0 ? (
+                {(patient.conditions ?? []).length === 0 ? (
                   <p className="text-sm text-slate-400">No chronic conditions recorded.</p>
                 ) : (
                   <div className="flex flex-wrap gap-2">
@@ -209,7 +214,7 @@ export function PatientDetails() {
             <Card>
               <CardHeader title="Allergies" />
               <CardBody>
-                {patient.allergies.length === 0 ? (
+                {(patient.allergies ?? []).length === 0 ? (
                   <p className="text-sm text-slate-400">No known allergies.</p>
                 ) : (
                   <div className="flex flex-wrap gap-2">

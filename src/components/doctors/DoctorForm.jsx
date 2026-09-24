@@ -77,7 +77,7 @@ export function DoctorForm({
     return Object.keys(next).length === 0;
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     if (!validate()) return;
     setSaving(true);
@@ -93,17 +93,20 @@ export function DoctorForm({
       status: form.status,
       color: form.color,
     };
-    setTimeout(() => {
+    try {
       if (doctor) {
-        updateDoctor(doctor.id, payload);
+        await updateDoctor(doctor.id, payload);
         toast("Doctor profile updated.");
       } else {
-        addDoctor({ ...payload, rating: 4.8, patientsCount: 0, availability: [] });
+        await addDoctor({ ...payload, rating: 4.8, patientsCount: 0, availability: [] });
         toast("Doctor added successfully.");
       }
+    } catch {
+      toast("Could not save the doctor. Please try again.", "error");
+    } finally {
       setSaving(false);
       onClose();
-    }, 500);
+    }
   }
 
   return (
