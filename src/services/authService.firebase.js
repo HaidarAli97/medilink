@@ -116,13 +116,72 @@ async function selfHealPatientRecord(fbUser, profile) {
   }
 }
 
+/** Build the doctors/{id} record for a doctor account that has no record yet. */
+function doctorRecordFromProfile(fbUser, profile, doctorId) {
+  const fullName = profile.fullName ?? fbUser.displayName ?? fbUser.email ?? "";
+  const [firstName = "", ...rest] = fullName.trim().split(/\s+/);
+  return {
+    id: doctorId,
+    firstName,
+    lastName: rest.join(" ").trim(),
+    specialization: "General Medicine",
+    phone: profile.phone ?? "",
+    email: profile.email ?? fbUser.email ?? "",
+    experienceYears: 0,
+    education: "Not specified",
+    bio: "Healthcare professional at MediLink.",
+    rating: 0,
+    patientsCount: 0,
+    status: "available",
+    color: "#0d9488",
+    availability: [],
+  };
+}
+
+/**
+ * Best-effort repair mirroring the patient self-heal: a doctor account whose
+ * clinical record is missing gets one created. If the profile has no linkedId,
+ * the record is created under the user's own uid and linkedId is bound to it
+ * (admins can re-point it later). Never throws — a healthy session keeps
+ * working even when the Firestore rules aren't deployed yet.
+ */
+async function selfHealDoctorRecord(fbUser, profile) {
+  if (profile.role !== ROLES.DOCTOR) return;
+  const doctorId = profile.linkedId ?? fbUser.uid;
+  try {
+    const doctorRef = doc(getFirebaseDb(), "doctors", doctorId);
+    const doctorSnap = await getDoc(doctorRef);
+    const batch = writeBatch(getFirebaseDb());
+    let changed = false;
+    if (!doctorSnap.exists()) {
+      batch.set(doctorRef, doctorRecordFromProfile(fbUser, profile, doctorId));
+      changed = true;
+    }
+    if (profile.linkedId == null) {
+      batch.set(
+        doc(getFirebaseDb(), "users", fbUser.uid),
+        { linkedId: doctorId },
+        { merge: true },
+      );
+      changed = true;
+    }
+    if (changed) await batch.commit();
+  } catch (err) {
+    console.error("[MediLink] Could not self-heal doctor record:", err);
+  }
+}
+
 async function loadOrCreateProfile(fbUser) {
   const ref = doc(getFirebaseDb(), "users", fbUser.uid);
   const snap = await getDoc(ref);
   if (snap.exists()) {
     const profile = { uid: fbUser.uid, ...snap.data() };
     await selfHealPatientRecord(fbUser, profile);
+    await selfHealDoctorRecord(fbUser, profile);
     if (profile.linkedId == null && profile.role === ROLES.PATIENT) {
+      profile.linkedId = fbUser.uid;
+    }
+    if (profile.linkedId == null && profile.role === ROLES.DOCTOR) {
       profile.linkedId = fbUser.uid;
     }
     return profile;

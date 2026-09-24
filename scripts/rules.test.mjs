@@ -79,6 +79,9 @@ await testEnv.withSecurityRulesDisabled(async (ctx) => {
     doc(db, "users", "doc-linked-1"),
     profile("doc-linked-1", { role: "doctor", linkedId: "doc-001" }),
   );
+  // A doctor whose profile predates the linkedId feature (no linkedId yet) —
+  // the self-heal target for the doctor-record tests below.
+  await setDoc(doc(db, "users", "self-doc-1"), profile("self-doc-1", { role: "doctor" }));
   await setDoc(doc(db, "appointments", "appt-1"), appointment("pat-001", "doc-001"));
   await setDoc(doc(db, "appointments", "appt-2"), appointment("pat-002", "doc-002"));
   // Domain docs the linked identities act as.
@@ -112,6 +115,8 @@ const anon = testEnv.unauthenticatedContext().firestore();
 // d1 is a doctor linked to doc-001.
 const p1 = testEnv.authenticatedContext("pat-linked-1", { email: "pat-linked-1@example.com" }).firestore();
 const d1 = testEnv.authenticatedContext("doc-linked-1", { email: "doc-linked-1@example.com" }).firestore();
+// A doctor whose profile is not yet linked to a doctors/{id} record (self-heal).
+const selfDoc = testEnv.authenticatedContext("self-doc-1", { email: "self-doc-1@example.com" }).firestore();
 
 let passed = 0;
 let failed = 0;
@@ -228,6 +233,36 @@ await expect(
 await expect(
   "doctor CANNOT self-heal their own users linkedId",
   assertFails(updateDoc(doc(d1, "users", "doc-linked-1"), { linkedId: "doc-linked-1" })),
+);
+
+// --- Doctor-record self-heal (doctor without a doctors/{id} record) -------
+await expect(
+  "unlinked doctor CAN bind linkedId to own uid (self-heal)",
+  assertSucceeds(updateDoc(doc(selfDoc, "users", "self-doc-1"), { linkedId: "self-doc-1" })),
+);
+await expect(
+  "unlinked doctor CAN create their own record (id == own uid, self-heal)",
+  assertSucceeds(
+    setDoc(doc(selfDoc, "doctors", "self-doc-1"), {
+      id: "self-doc-1", firstName: "Healed", lastName: "Doc", status: "available",
+    }),
+  ),
+);
+await expect(
+  "doctor CANNOT create another doctor's record",
+  assertFails(
+    setDoc(doc(selfDoc, "doctors", "someone-else"), {
+      id: "someone-else", firstName: "X", status: "available",
+    }),
+  ),
+);
+await expect(
+  "linked doctor CANNOT self-record under a different id",
+  assertFails(
+    setDoc(doc(d1, "doctors", "doc-other"), {
+      id: "doc-other", firstName: "X", status: "available",
+    }),
+  ),
 );
 
 // --- Legitimate self-service --------------------------------------------

@@ -96,10 +96,10 @@ service cloud.firestore {
       // roles are provisioned). A non-admin owner may edit only display fields;
       // role, uid, email and linkedId must be unchanged, so a client can never
       // escalate its role or re-point itself at another user's records. One
-      // exception: a patient whose profile predates the linkedId feature may
-      // bind once to its OWN patient record (linkedId null -> own uid, role
-      // stays patient, uid/email unchanged). Cannot re-point an already-linked
-      // account elsewhere.
+      // exception: a patient or doctor whose profile predates the linkedId
+      // feature may bind once to its OWN clinical record (linkedId null -> own
+      // uid, role unchanged, uid/email unchanged). Cannot re-point an
+      // already-linked account elsewhere.
       allow update: if isAdmin()
         || (isOwner(uid)
             && request.resource.data.role == resource.data.role
@@ -107,9 +107,9 @@ service cloud.firestore {
             && request.resource.data.email == resource.data.email
             && request.resource.data.linkedId == resource.data.linkedId)
         || (isOwner(uid)
-            && resource.data.role == 'patient'
+            && (resource.data.role == 'patient' || resource.data.role == 'doctor')
+            && resource.data.role == request.resource.data.role
             && linkedIdOf(resource.data) == null
-            && request.resource.data.role == 'patient'
             && request.resource.data.uid == uid
             && request.resource.data.email == resource.data.email
             && request.resource.data.linkedId == request.auth.uid);
@@ -170,14 +170,17 @@ service cloud.firestore {
 
     // ---- doctors: doctors/{id} --------------------------------------------
     // The roster is readable by admins, patients (find-a-doctor) and the doctor
-    // him/herself. Only admins (and the doctor editing their own profile) write.
+    // him/herself. Only admins (and the doctor creating/editing their own
+    // profile) write; a doctor can self-create their record when provisioning
+    // hasn't (self-heal), but never anyone else's.
     match /doctors/{id} {
       allow read: if isAdmin()
         || isSignedIn()
         || isDoctor()
         || (isSignedIn() && id == myLinkedId());
 
-      allow create: if isAdmin();
+      allow create: if isAdmin()
+        || (isDoctor() && (id == myLinkedId() || id == request.auth.uid));
 
       allow update: if isAdmin()
         || (isDoctor() && id == myLinkedId());
